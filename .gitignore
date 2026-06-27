@@ -1,0 +1,23 @@
+# Build artifacts
+*.o
+*.d
+cgent
+cgent-static
+
+# Test binaries
+test/test-json
+test/test-message
+test/test-config
+test/test-tools
+test/test-integration
+test/test-memory
+test/test-subagent
+
+# IDE / editor
+*.swp
+*.swo
+*~
+.vscode/
+.idea/
+compile_commands.json
+tags
