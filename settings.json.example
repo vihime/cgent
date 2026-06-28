@@ -1,0 +1,22 @@
+{
+  "provider": "deepseek",
+  "model": "deepseek-chat",
+  "temperature": 0.7,
+  "max_tokens": 4096,
+  "stream": true,
+  "agent_dir": "agents/cgent/",
+  "providers": {
+    "deepseek": {
+      "api_key": "",
+      "base_url": "https://api.deepseek.com"
+    },
+    "openai": {
+      "api_key": "",
+      "base_url": "https://api.openai.com"
+    },
+    "anthropic": {
+      "api_key": "",
+      "base_url": "https://api.anthropic.com"
+    }
+  }
+}

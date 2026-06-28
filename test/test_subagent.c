@@ -21,8 +21,9 @@ static int tests = 0, passed = 0;
 
 static void test_subagent_simple(void) {
     TEST("subagent simple task (live API)");
-    const char *api_key = getenv("CGENT_API_KEY");
-    if (!api_key) api_key = getenv("DEEPSEEK_API_KEY");
+    const char *api_key = getenv("DEEPSEEK_API_KEY");
+    if (!api_key) api_key = getenv("OPENAI_API_KEY");
+    if (!api_key) api_key = getenv("ANTHROPIC_API_KEY");
     if (!api_key) { printf("SKIP (no API key)\n"); tests--; return; }
 
     http_init();
@@ -56,7 +57,9 @@ static void test_subagent_simple(void) {
 
 static void test_subagent_with_tools(void) {
     TEST("subagent with tool use (live API)");
-    const char *api_key = getenv("CGENT_API_KEY");
+    const char *api_key = getenv("DEEPSEEK_API_KEY");
+    if (!api_key) api_key = getenv("OPENAI_API_KEY");
+    if (!api_key) api_key = getenv("ANTHROPIC_API_KEY");
     if (!api_key) { printf("SKIP (no API key)\n"); tests--; return; }
 
     FILE *fp = fopen("/tmp/cgent_subagent_test.txt", "w");

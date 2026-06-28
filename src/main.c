@@ -25,7 +25,7 @@ static void print_usage(const char *prog) {
     printf("  -p, --provider <name>    API provider: deepseek, openai, anthropic\n");
     printf("                           (default: deepseek)\n");
     printf("  -m, --model <name>       Model name (default: deepseek-chat)\n");
-    printf("  -k, --api-key <key>      API key (or set CGENT_API_KEY env var)\n");
+    printf("  -k, --api-key <key>      API key (override for current provider)\n");
     printf("  -u, --base-url <url>     Override API base URL\n");
     printf("  -q, --query <text>       Single query mode (non-interactive)\n");
     printf("  -a, --agent <dir>        Agent directory (default: agents/cgent/)\n");
@@ -40,13 +40,15 @@ static void print_usage(const char *prog) {
     printf("  The agent directory must contain an AGENTS.md file\n");
     printf("  which provides the system prompt for the agent.\n");
     printf("\nEnvironment:\n");
-    printf("  CGENT_API_KEY            API key\n");
     printf("  DEEPSEEK_API_KEY         DeepSeek API key\n");
     printf("  OPENAI_API_KEY           OpenAI API key\n");
     printf("  ANTHROPIC_API_KEY        Anthropic API key\n");
     printf("  CGENT_MODEL              Default model\n");
     printf("  CGENT_PROVIDER           Default provider\n");
     printf("  CGENT_AGENT_DIR          Agent directory path\n");
+    printf("\nConfiguration:\n");
+    printf("  ~/.cgent/settings.json   Default config file\n");
+    printf("  ~/.cgent/                cgent config & temp directory\n");
     printf("\nExamples:\n");
     printf("  %s -q \"What is 2+2?\"\n", prog);
     printf("  %s -a agents/myagent -q \"Hello\"\n", prog);
@@ -106,19 +108,12 @@ int main(int argc, char **argv) {
         }
     }
 
-    /* Resolve API key */
-    if (!cfg->api_key) {
-        char *env = os_getenv("CGENT_API_KEY");
-        if (!env) env = os_getenv("DEEPSEEK_API_KEY");
-        if (!env) env = os_getenv("OPENAI_API_KEY");
-        if (!env) env = os_getenv("ANTHROPIC_API_KEY");
-        cfg->api_key = env;
-    }
-
+    /* Resolve API key (already done by resolve_provider in config_load,
+     * but CLI --api-key takes priority) */
     if (!cfg->api_key) {
         fprintf(stderr, "Error: No API key provided.\n");
-        fprintf(stderr, "Set CGENT_API_KEY or provider-specific env var, "
-                        "or use --api-key.\n");
+        fprintf(stderr, "Set DEEPSEEK_API_KEY, OPENAI_API_KEY, or ANTHROPIC_API_KEY\n");
+        fprintf(stderr, "or configure ~/.cgent/settings.json, or use --api-key.\n");
         config_free(cfg);
         return 1;
     }

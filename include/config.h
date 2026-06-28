@@ -26,12 +26,21 @@ void         agent_md_free(agent_md_t *am);
 
 /* ── Runtime configuration ──────────────────────────────────────── */
 
+/* Per-provider configuration in settings.json */
+typedef struct {
+    char *api_key;
+    char *base_url;
+} provider_entry_t;
+
 typedef struct {
     /* Provider */
     char *provider;             /* "deepseek", "openai", "anthropic" */
     char *model;
-    char *api_key;
-    char *base_url;             /* Override endpoint */
+    char *api_key;              /* Resolved API key for current provider */
+    char *base_url;             /* Resolved base URL */
+
+    /* Provider-specific entries from settings.json */
+    provider_entry_t providers[3]; /* [0]=deepseek, [1]=openai, [2]=anthropic */
 
     /* Agent settings */
     char *agent_dir;            /* Agent directory (e.g. "agents/cgent/") */
@@ -42,7 +51,8 @@ typedef struct {
     bool verbose;
 
     /* Files */
-    char *config_path;
+    char *config_path;          /* Explicit config path override */
+    char *cgent_dir;            /* ~/.cgent/ directory */
 
     /* MCP */
     char **mcp_server_commands;
@@ -51,8 +61,8 @@ typedef struct {
 
 /* Load config from hierarchy:
  *   1. Built-in defaults
- *   2. Environment variables (CGENT_*)
- *   3. Config file (~/.config/cgent/config.yaml)
+ *   2. ~/.cgent/settings.json
+ *   3. Environment variables (DEEPSEEK_API_KEY, OPENAI_API_KEY, ANTHROPIC_API_KEY)
  *   4. AGENTS.md from agent directory (agents/cgent/ by default)
  *   5. CLI arguments override
  *
@@ -63,6 +73,9 @@ void            config_free(cgent_config_t *config);
 
 /* Resolve the system prompt from an agent directory's AGENTS.md */
 char *config_resolve_agent_prompt(const char *agent_dir);
+
+/* Get the ~/.cgent directory path (creates it if needed) */
+char *config_cgent_dir(void);
 
 /* ── CLI argument parsing ───────────────────────────────────────── */
 

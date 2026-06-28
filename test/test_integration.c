@@ -496,8 +496,9 @@ static void test_bubble_sort_mock(void) {
 }
 
 int main(void) {
-    api_key = getenv("CGENT_API_KEY");
-    if (!api_key) api_key = getenv("DEEPSEEK_API_KEY");
+    api_key = getenv("DEEPSEEK_API_KEY");
+    if (!api_key) api_key = getenv("OPENAI_API_KEY");
+    if (!api_key) api_key = getenv("ANTHROPIC_API_KEY");
 
     printf("Integration tests (DeepSeek API):\n");
     if (!api_key) {

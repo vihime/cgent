@@ -187,7 +187,7 @@ static char *tool_spawn_subagent(const char *name, const char *args_json, char *
     subagent_config_t cfg = {
         .provider     = (char *)(provider_val ? json_string_value(provider_val) : "deepseek"),
         .model        = (char *)(model_val ? json_string_value(model_val) : "deepseek-chat"),
-        .api_key      = os_getenv("CGENT_API_KEY"),
+        .api_key      = NULL,
         .system_prompt = (char *)(prompt_val ? json_string_value(prompt_val) : NULL),
         .task         = (char *)json_string_value(task_val),
         .temperature  = 0.0,
@@ -195,7 +195,10 @@ static char *tool_spawn_subagent(const char *name, const char *args_json, char *
         .timeout_seconds = 120,
     };
 
+    /* Resolve API key from environment (provider-specific) */
     if (!cfg.api_key) cfg.api_key = os_getenv("DEEPSEEK_API_KEY");
+    if (!cfg.api_key) cfg.api_key = os_getenv("OPENAI_API_KEY");
+    if (!cfg.api_key) cfg.api_key = os_getenv("ANTHROPIC_API_KEY");
 
     subagent_result_t *result = subagent_run(&cfg);
     free(cfg.api_key);
