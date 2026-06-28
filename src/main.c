@@ -119,12 +119,13 @@ int main(int argc, char **argv) {
     }
 
     if (cfg->verbose) {
-        fprintf(stderr, "[cgent] provider=%s model=%s stream=%d\n",
-                cfg->provider, cfg->model, cfg->stream);
+        fprintf(stderr, "[cgent] model=%s provider=%s stream=%d\n",
+                cfg->model, cfg->provider, cfg->stream);
         fprintf(stderr, "[cgent] temperature=%.2f max_tokens=%d\n",
                 cfg->temperature, cfg->max_tokens);
         fprintf(stderr, "[cgent] agent_dir=%s\n",
                 cfg->agent_dir ? cfg->agent_dir : "(none)");
+        fprintf(stderr, "[cgent] %d models available\n", cfg->model_count);
     }
 
     /* Initialize subsystems */
@@ -235,7 +236,7 @@ int main(int argc, char **argv) {
                     printf("  /help         — Show this help\n");
                     printf("  /clear        — Clear conversation history\n");
                     printf("  /tools        — List available tools\n");
-                    printf("  /model <name> — Switch model\n");
+                    printf("  /model [name] — List models or switch to <name>\n");
                     printf("\nOr just type a message to chat with the agent.\n");
                 } else if (strcmp(line, "/clear") == 0) {
                     for (int i = 0; i < agent->n_messages; i++)
@@ -249,10 +250,40 @@ int main(int argc, char **argv) {
                                agent->tools[i].name,
                                agent->tools[i].description);
                     }
-                } else if (strncmp(line, "/model ", 7) == 0) {
-                    free(agent->provider.model);
-                    agent->provider.model = strdup(line + 7);
-                    printf("Model changed to: %s\n", agent->provider.model);
+                } else if (strncmp(line, "/model", 6) == 0) {
+                    if (line[6] == ' ' && line[7]) {
+                        /* /model <name> — switch model */
+                        const char *model_name = line + 7;
+                        if (config_switch_model(cfg, model_name) == 0) {
+                            /* Update agent's provider config */
+                            free(agent->provider.api_key);
+                            agent->provider.api_key = cfg->api_key ? strdup(cfg->api_key) : NULL;
+                            free(agent->provider.base_url);
+                            agent->provider.base_url = cfg->base_url ? strdup(cfg->base_url) : NULL;
+                            free(agent->provider.model);
+                            agent->provider.model = strdup(cfg->model);
+                            agent->provider.temperature = cfg->temperature;
+                            agent->provider.max_tokens = cfg->max_tokens;
+                            agent->provider.stream = cfg->stream;
+                            printf("Model changed to: %s (provider: %s)\n",
+                                   cfg->model, cfg->provider);
+                        } else {
+                            printf("Unknown model: %s. Available models:\n", model_name);
+                            for (int i = 0; i < cfg->model_count; i++) {
+                                printf("  - %s (%s)\n",
+                                       cfg->models[i].name, cfg->models[i].provider);
+                            }
+                        }
+                    } else {
+                        /* /model without args — list available models */
+                        printf("Available models (%d):\n", cfg->model_count);
+                        for (int i = 0; i < cfg->model_count; i++) {
+                            const char *mark = (i == cfg->active_model) ? " *" : "  ";
+                            printf("%s%s (%s)\n", mark,
+                                   cfg->models[i].name, cfg->models[i].provider);
+                        }
+                        printf("Use /model <name> to switch.\n");
+                    }
                 } else {
                     printf("Unknown command: %s (try /help)\n", line);
                 }

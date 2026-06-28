@@ -13,46 +13,59 @@ typedef struct {
     char *name;
     char *description;
     char *model;
-    char *instruction;          /* Main body after frontmatter */
-    char **mcp_servers;         /* MCP server names */
+    char *instruction;
+    char **mcp_servers;
     int mcp_servers_count;
-    char **skills;              /* Skill names */
+    char **skills;
     int skills_count;
 } agent_md_t;
 
-/* Parse an AGENTS.md file. Returns NULL on error. */
 agent_md_t  *agent_md_parse(const char *filepath);
 void         agent_md_free(agent_md_t *am);
 
-/* ── Runtime configuration ──────────────────────────────────────── */
+/* ── Model entry (from settings.json models section) ────────────── */
 
-/* Per-provider configuration in settings.json */
+#define CGENT_MAX_MODELS 64
+
 typedef struct {
+    char *name;             /* Model name (key), e.g. "deepseek-chat" */
+    char *provider;         /* "deepseek", "openai", "anthropic" */
     char *api_key;
     char *base_url;
-} provider_entry_t;
-
-typedef struct {
-    /* Provider */
-    char *provider;             /* "deepseek", "openai", "anthropic" */
-    char *model;
-    char *api_key;              /* Resolved API key for current provider */
-    char *base_url;             /* Resolved base URL */
-
-    /* Provider-specific entries from settings.json */
-    provider_entry_t providers[3]; /* [0]=deepseek, [1]=openai, [2]=anthropic */
-
-    /* Agent settings */
-    char *agent_dir;            /* Agent directory (e.g. "agents/cgent/") */
-    char *system_prompt;        /* Resolved system prompt from AGENTS.md */
     double temperature;
     int max_tokens;
     bool stream;
+} model_entry_t;
+
+/* ── Runtime configuration ──────────────────────────────────────── */
+
+typedef struct {
+    /* Known models (from settings.json) */
+    model_entry_t models[CGENT_MAX_MODELS];
+    int model_count;
+
+    /* Active model index */
+    int active_model;
+
+    /* Resolved values from active model (convenience accessors) */
+    char *provider;
+    char *model;
+    char *api_key;
+    char *base_url;
+    double temperature;
+    int max_tokens;
+    bool stream;
+
+    /* Agent settings */
+    char *agent_dir;
+    char *system_prompt;
+
+    /* General */
     bool verbose;
 
     /* Files */
-    char *config_path;          /* Explicit config path override */
-    char *cgent_dir;            /* ~/.cgent/ directory */
+    char *config_path;
+    char *cgent_dir;
 
     /* MCP */
     char **mcp_server_commands;
@@ -60,24 +73,29 @@ typedef struct {
 } cgent_config_t;
 
 /* Load config from hierarchy:
- *   1. Built-in defaults
- *   2. ~/.cgent/settings.json
- *   3. Environment variables (DEEPSEEK_API_KEY, OPENAI_API_KEY, ANTHROPIC_API_KEY)
- *   4. AGENTS.md from agent directory (agents/cgent/ by default)
+ *   1. Built-in defaults (deepseek-chat model)
+ *   2. ~/.cgent/settings.json (models section)
+ *   3. Environment variables (DEEPSEEK_API_KEY, etc. override per-model keys)
+ *   4. AGENTS.md from agent directory
  *   5. CLI arguments override
- *
- * Caller must free with config_free().
  */
 cgent_config_t *config_load(void);
 void            config_free(cgent_config_t *config);
 
-/* Resolve the system prompt from an agent directory's AGENTS.md */
+/* Resolve system prompt from agent directory */
 char *config_resolve_agent_prompt(const char *agent_dir);
 
-/* Get the ~/.cgent directory path (creates it if needed) */
+/* Get/create ~/.cgent directory */
 char *config_cgent_dir(void);
 
-/* ── CLI argument parsing ───────────────────────────────────────── */
+/* Switch active model by name. Returns 0 on success, -1 if not found.
+ * Updates all resolved fields (provider, api_key, base_url, etc.). */
+int  config_switch_model(cgent_config_t *cfg, const char *model_name);
+
+/* Find model by name, returns index or -1 */
+int  config_find_model(cgent_config_t *cfg, const char *name);
+
+/* ── CLI arguments ──────────────────────────────────────────────── */
 
 typedef struct {
     char *provider;
@@ -85,7 +103,7 @@ typedef struct {
     char *api_key;
     char *base_url;
     char *query;
-    char *agent_dir;            /* --agent: override agent directory */
+    char *agent_dir;
     char *config_path;
     double temperature;
     int max_tokens;
@@ -95,10 +113,7 @@ typedef struct {
     bool version;
 } cli_args_t;
 
-/* Parse command line arguments. Exits on parse errors. */
 cli_args_t cli_parse(int argc, char **argv);
-
-/* Merge CLI args into config (CLI takes highest priority) */
 void config_apply_cli(cgent_config_t *cfg, const cli_args_t *args);
 
 #endif /* CONFIG_H */

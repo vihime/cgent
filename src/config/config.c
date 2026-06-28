@@ -1,12 +1,21 @@
 /*
- * config.c — Configuration loading
+ * config.c — Configuration loading, organized by models
  *
- * Priority (lowest to highest):
- *   1. Built-in defaults
- *   2. ~/.cgent/settings.json
- *   3. Environment variables (provider-specific: DEEPSEEK_API_KEY, etc.)
- *   4. AGENTS.md from agent directory
- *   5. CLI arguments (applied separately via config_apply_cli)
+ * settings.json format:
+ * {
+ *   "default_model": "deepseek-chat",
+ *   "models": {
+ *     "deepseek-chat": {
+ *       "provider": "deepseek",
+ *       "api_key": "sk-xxx",
+ *       "base_url": "https://api.deepseek.com",
+ *       "temperature": 0.7,
+ *       "max_tokens": 4096,
+ *       "stream": true
+ *     },
+ *     ...
+ *   }
+ * }
  */
 #include "config.h"
 #include "json.h"
@@ -22,33 +31,49 @@ char *config_cgent_dir(void) {
     char *home = os_home_dir();
     char *dir = os_path_join(home, ".cgent");
     free(home);
-    /* Create if it doesn't exist */
-    if (!os_path_exists(dir)) {
-        os_mkdir_p(dir);
-    }
+    if (!os_path_exists(dir)) os_mkdir_p(dir);
     return dir;
 }
 
-/* ── Defaults ───────────────────────────────────────────────────── */
+/* ── Built-in defaults ──────────────────────────────────────────── */
+
+static void add_default_model(cgent_config_t *cfg, const char *name,
+                               const char *provider, const char *base_url) {
+    if (cfg->model_count >= CGENT_MAX_MODELS) return;
+    model_entry_t *m = &cfg->models[cfg->model_count++];
+    m->name        = strdup(name);
+    m->provider    = strdup(provider);
+    m->api_key     = NULL;
+    m->base_url    = strdup(base_url);
+    m->temperature = 0.7;
+    m->max_tokens  = 4096;
+    m->stream      = true;
+}
 
 static cgent_config_t defaults(void) {
-    cgent_config_t cfg = {
-        .provider      = strdup("deepseek"),
-        .model         = strdup("deepseek-chat"),
-        .api_key       = NULL,
-        .base_url      = NULL,
-        .providers     = {{0}},
-        .agent_dir     = strdup("agents/cgent/"),
-        .system_prompt = NULL,
-        .temperature   = 0.7,
-        .max_tokens    = 4096,
-        .stream        = true,
-        .verbose       = false,
-        .config_path   = NULL,
-        .cgent_dir     = config_cgent_dir(),
-        .mcp_server_commands = NULL,
-        .mcp_server_count    = 0,
-    };
+    cgent_config_t cfg = {0};
+
+    /* Pre-register known models with defaults */
+    add_default_model(&cfg, "deepseek-chat",    "deepseek",  "https://api.deepseek.com");
+    add_default_model(&cfg, "deepseek-reasoner","deepseek",  "https://api.deepseek.com");
+    add_default_model(&cfg, "gpt-4o",           "openai",    "https://api.openai.com");
+    add_default_model(&cfg, "gpt-4o-mini",      "openai",    "https://api.openai.com");
+    add_default_model(&cfg, "claude-sonnet-4-6","anthropic", "https://api.anthropic.com");
+    add_default_model(&cfg, "claude-opus-4-8",  "anthropic", "https://api.anthropic.com");
+
+    cfg.active_model  = 0;  /* deepseek-chat */
+    cfg.provider      = strdup(cfg.models[0].provider);
+    cfg.model         = strdup(cfg.models[0].name);
+    cfg.api_key       = NULL;
+    cfg.base_url      = strdup(cfg.models[0].base_url);
+    cfg.temperature   = cfg.models[0].temperature;
+    cfg.max_tokens    = cfg.models[0].max_tokens;
+    cfg.stream        = cfg.models[0].stream;
+    cfg.agent_dir     = strdup("agents/cgent/");
+    cfg.system_prompt = NULL;
+    cfg.verbose       = false;
+    cfg.cgent_dir     = config_cgent_dir();
+
     return cfg;
 }
 
@@ -56,12 +81,8 @@ static cgent_config_t defaults(void) {
 
 static void apply_settings_file(cgent_config_t *cfg) {
     char *path = os_path_join(cfg->cgent_dir, "settings.json");
-    if (!path || !os_path_exists(path)) {
-        free(path);
-        return;
-    }
+    if (!path || !os_path_exists(path)) { free(path); return; }
 
-    /* Read file */
     FILE *fp = fopen(path, "r");
     if (!fp) { free(path); return; }
     fseek(fp, 0, SEEK_END);
@@ -77,45 +98,73 @@ static void apply_settings_file(cgent_config_t *cfg) {
     free(data);
     if (!root) { free(path); return; }
 
-    /* Top-level fields */
-    json_value_t *v;
+    /* default_model */
+    json_value_t *defm = json_object_get(root, "default_model");
+    const char *default_name = defm && json_is_string(defm) ? json_string_value(defm) : NULL;
 
-    v = json_object_get(root, "provider");
-    if (v && json_is_string(v)) { free(cfg->provider); cfg->provider = strdup(json_string_value(v)); }
+    /* models section */
+    json_value_t *models_obj = json_object_get(root, "models");
+    if (models_obj && json_is_object(models_obj)) {
+        /* Iterate over model entries */
+        json_iter_t it = json_iter_object(models_obj);
+        const char *key;
+        json_value_t *val;
+        while (json_iter_next(&it, &key, &val)) {
+            if (!val || !json_is_object(val)) continue;
 
-    v = json_object_get(root, "model");
-    if (v && json_is_string(v)) { free(cfg->model); cfg->model = strdup(json_string_value(v)); }
+            /* Find or create model entry */
+            int idx = -1;
+            for (int i = 0; i < cfg->model_count; i++) {
+                if (strcmp(cfg->models[i].name, key) == 0) { idx = i; break; }
+            }
+            if (idx < 0 && cfg->model_count < CGENT_MAX_MODELS) {
+                idx = cfg->model_count++;
+                cfg->models[idx].name = strdup(key);
+                cfg->models[idx].provider = strdup("deepseek"); /* default */
+            }
+            if (idx < 0) continue;
 
-    v = json_object_get(root, "temperature");
-    if (v && json_is_number(v)) cfg->temperature = json_number_value(v);
+            model_entry_t *m = &cfg->models[idx];
+            json_value_t *v;
 
-    v = json_object_get(root, "max_tokens");
-    if (v && json_is_number(v)) cfg->max_tokens = (int)json_number_value(v);
+            v = json_object_get(val, "provider");
+            if (v && json_is_string(v)) { free(m->provider); m->provider = strdup(json_string_value(v)); }
 
-    v = json_object_get(root, "stream");
-    if (v && json_is_bool(v)) cfg->stream = json_bool_value(v);
+            v = json_object_get(val, "api_key");
+            if (v && json_is_string(v) && json_string_value(v)[0]) {
+                free(m->api_key); m->api_key = strdup(json_string_value(v));
+            }
 
-    v = json_object_get(root, "agent_dir");
-    if (v && json_is_string(v)) { free(cfg->agent_dir); cfg->agent_dir = strdup(json_string_value(v)); }
+            v = json_object_get(val, "base_url");
+            if (v && json_is_string(v) && json_string_value(v)[0]) {
+                free(m->base_url); m->base_url = strdup(json_string_value(v));
+            }
 
-    /* Provider-specific entries */
-    json_value_t *providers = json_object_get(root, "providers");
-    if (providers && json_is_object(providers)) {
-        static const char *names[] = {"deepseek", "openai", "anthropic"};
-        for (int i = 0; i < 3; i++) {
-            json_value_t *pe = json_object_get(providers, names[i]);
-            if (pe && json_is_object(pe)) {
-                v = json_object_get(pe, "api_key");
-                if (v && json_is_string(v)) {
-                    cfg->providers[i].api_key = strdup(json_string_value(v));
-                }
-                v = json_object_get(pe, "base_url");
-                if (v && json_is_string(v)) {
-                    cfg->providers[i].base_url = strdup(json_string_value(v));
-                }
+            v = json_object_get(val, "temperature");
+            if (v && json_is_number(v)) m->temperature = json_number_value(v);
+
+            v = json_object_get(val, "max_tokens");
+            if (v && json_is_number(v)) m->max_tokens = (int)json_number_value(v);
+
+            v = json_object_get(val, "stream");
+            if (v && json_is_bool(v)) m->stream = json_bool_value(v);
+        }
+    }
+
+    /* Set active model from default_model or keep first */
+    if (default_name) {
+        for (int i = 0; i < cfg->model_count; i++) {
+            if (strcmp(cfg->models[i].name, default_name) == 0) {
+                cfg->active_model = i;
+                break;
             }
         }
     }
+
+    /* Top-level overrides (for backward compat) */
+    json_value_t *v;
+    v = json_object_get(root, "agent_dir");
+    if (v && json_is_string(v)) { free(cfg->agent_dir); cfg->agent_dir = strdup(json_string_value(v)); }
 
     json_free(root);
     free(path);
@@ -126,24 +175,34 @@ static void apply_settings_file(cgent_config_t *cfg) {
 static void apply_env(cgent_config_t *cfg) {
     char *val;
 
-    /* Provider-specific API keys (replaces generic CGENT_API_KEY) */
+    /* Provider-specific API keys — apply to matching models */
     val = os_getenv("DEEPSEEK_API_KEY");
-    if (val) { free(cfg->providers[0].api_key); cfg->providers[0].api_key = val; }
-
+    if (val) {
+        for (int i = 0; i < cfg->model_count; i++) {
+            if (strcmp(cfg->models[i].provider, "deepseek") == 0 && !cfg->models[i].api_key) {
+                cfg->models[i].api_key = strdup(val);
+            }
+        }
+        free(val);
+    }
     val = os_getenv("OPENAI_API_KEY");
-    if (val) { free(cfg->providers[1].api_key); cfg->providers[1].api_key = val; }
-
+    if (val) {
+        for (int i = 0; i < cfg->model_count; i++) {
+            if (strcmp(cfg->models[i].provider, "openai") == 0 && !cfg->models[i].api_key) {
+                cfg->models[i].api_key = strdup(val);
+            }
+        }
+        free(val);
+    }
     val = os_getenv("ANTHROPIC_API_KEY");
-    if (val) { free(cfg->providers[2].api_key); cfg->providers[2].api_key = val; }
-
-    val = os_getenv("CGENT_PROVIDER");
-    if (val) { free(cfg->provider); cfg->provider = val; }
-
-    val = os_getenv("CGENT_MODEL");
-    if (val) { free(cfg->model); cfg->model = val; }
-
-    val = os_getenv("CGENT_BASE_URL");
-    if (val) { free(cfg->base_url); cfg->base_url = val; }
+    if (val) {
+        for (int i = 0; i < cfg->model_count; i++) {
+            if (strcmp(cfg->models[i].provider, "anthropic") == 0 && !cfg->models[i].api_key) {
+                cfg->models[i].api_key = strdup(val);
+            }
+        }
+        free(val);
+    }
 
     val = os_getenv("CGENT_AGENT_DIR");
     if (val) { free(cfg->agent_dir); cfg->agent_dir = val; }
@@ -155,26 +214,50 @@ static void apply_env(cgent_config_t *cfg) {
     if (val) { cfg->max_tokens = atoi(val); free(val); }
 }
 
-/* ── Resolve current provider's api_key and base_url ────────────── */
+/* ── Resolve active model into flat config fields ────────────────── */
 
-static void resolve_provider(cgent_config_t *cfg) {
-    int idx = 0;
-    if (strcmp(cfg->provider, "openai") == 0) idx = 1;
-    else if (strcmp(cfg->provider, "anthropic") == 0) idx = 2;
-
-    /* API key: CLI override > env > settings.json */
-    /* (cfg->api_key is set by CLI via config_apply_cli) */
-    if (!cfg->api_key && cfg->providers[idx].api_key &&
-        cfg->providers[idx].api_key[0]) {
-        cfg->api_key = strdup(cfg->providers[idx].api_key);
+static void resolve_active_model(cgent_config_t *cfg) {
+    if (cfg->active_model < 0 || cfg->active_model >= cfg->model_count) {
+        cfg->active_model = 0;
     }
+    model_entry_t *m = &cfg->models[cfg->active_model];
 
-    /* Base URL: CLI override > settings.json > provider default */
-    /* (cfg->base_url is set by CLI via config_apply_cli) */
-    if (!cfg->base_url && cfg->providers[idx].base_url &&
-        cfg->providers[idx].base_url[0]) {
-        cfg->base_url = strdup(cfg->providers[idx].base_url);
+    free(cfg->provider);  cfg->provider  = strdup(m->provider);
+    free(cfg->model);     cfg->model     = strdup(m->name);
+    cfg->temperature = m->temperature;
+    cfg->max_tokens  = m->max_tokens;
+    cfg->stream      = m->stream;
+
+    /* api_key: keep CLI override if set, else use model's */
+    if (!cfg->api_key) {
+        cfg->api_key = m->api_key ? strdup(m->api_key) : NULL;
     }
+    /* base_url: keep CLI override if set, else use model's */
+    if (!cfg->base_url) {
+        cfg->base_url = m->base_url ? strdup(m->base_url) : NULL;
+    }
+}
+
+/* ── Model switching ────────────────────────────────────────────── */
+
+int config_find_model(cgent_config_t *cfg, const char *name) {
+    for (int i = 0; i < cfg->model_count; i++) {
+        if (strcmp(cfg->models[i].name, name) == 0) return i;
+    }
+    return -1;
+}
+
+int config_switch_model(cgent_config_t *cfg, const char *model_name) {
+    int idx = config_find_model(cfg, model_name);
+    if (idx < 0) return -1;
+    cfg->active_model = idx;
+
+    /* Clear overridden fields so resolve picks up new model */
+    free(cfg->api_key);  cfg->api_key = NULL;
+    free(cfg->base_url); cfg->base_url = NULL;
+
+    resolve_active_model(cfg);
+    return 0;
 }
 
 /* ── Agent prompt ────────────────────────────────────────────────── */
@@ -183,11 +266,9 @@ char *config_resolve_agent_prompt(const char *agent_dir) {
     char *path = os_path_join(agent_dir, "AGENTS.md");
     if (!path) return NULL;
     if (!os_path_exists(path)) { free(path); return NULL; }
-
     agent_md_t *am = agent_md_parse(path);
     free(path);
     if (!am) return NULL;
-
     char *prompt = am->instruction ? strdup(am->instruction) : NULL;
     agent_md_free(am);
     return prompt;
@@ -200,35 +281,28 @@ cgent_config_t *config_load(void) {
     if (!cfg) return NULL;
     *cfg = defaults();
 
-    /* Layer 2: ~/.cgent/settings.json */
     apply_settings_file(cfg);
-
-    /* Layer 3: environment variables */
     apply_env(cfg);
+    resolve_active_model(cfg);
 
-    /* Layer 4: resolve provider key/url from settings/env */
-    resolve_provider(cfg);
-
-    /* Layer 5: AGENTS.md from agent directory */
     char *prompt = config_resolve_agent_prompt(cfg->agent_dir);
-    if (prompt) {
-        free(cfg->system_prompt);
-        cfg->system_prompt = prompt;
-    }
+    if (prompt) { free(cfg->system_prompt); cfg->system_prompt = prompt; }
 
     return cfg;
 }
 
 void config_free(cgent_config_t *cfg) {
     if (!cfg) return;
+    for (int i = 0; i < cfg->model_count; i++) {
+        free(cfg->models[i].name);
+        free(cfg->models[i].provider);
+        free(cfg->models[i].api_key);
+        free(cfg->models[i].base_url);
+    }
     free(cfg->provider);
     free(cfg->model);
     free(cfg->api_key);
     free(cfg->base_url);
-    for (int i = 0; i < 3; i++) {
-        free(cfg->providers[i].api_key);
-        free(cfg->providers[i].base_url);
-    }
     free(cfg->agent_dir);
     free(cfg->system_prompt);
     free(cfg->config_path);
