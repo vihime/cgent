@@ -104,6 +104,61 @@ static void test_think_tool(void) {
     OK();
 }
 
+static void test_edit_tool(void) {
+    TEST("edit tool");
+    /* Create test file */
+    FILE *fp = fopen("/tmp/cgent_edit_test.c", "w");
+    fprintf(fp, "int main() {\n    return 0;\n}\n");
+    fclose(fp);
+
+    char *error = NULL;
+    char *result = tool_execute("edit",
+        "{\"file_path\":\"/tmp/cgent_edit_test.c\","
+        "\"old_string\":\"return 0;\","
+        "\"new_string\":\"return 1;\"}", 5000, &error);
+    CHECK(result != NULL);
+    CHECK(error == NULL);
+
+    /* Verify edit */
+    fp = fopen("/tmp/cgent_edit_test.c", "r");
+    CHECK(fp != NULL);
+    char buf[256] = {0};
+    fread(buf, 1, sizeof(buf)-1, fp);
+    fclose(fp);
+    CHECK(strstr(buf, "return 1;") != NULL);
+    CHECK(strstr(buf, "return 0;") == NULL);
+
+    free(result);
+    unlink("/tmp/cgent_edit_test.c");
+    OK();
+}
+
+static void test_glob_tool(void) {
+    TEST("glob tool");
+    char *error = NULL;
+    char *result = tool_execute("glob",
+        "{\"pattern\":\"*.c\"}", 5000, &error);
+    CHECK(result != NULL);
+    CHECK(error == NULL);
+    /* Should find at least main.c */
+    CHECK(strstr(result, ".c") != NULL);
+    free(result);
+    OK();
+}
+
+static void test_grep_tool(void) {
+    TEST("grep tool");
+    char *error = NULL;
+    char *result = tool_execute("grep",
+        "{\"pattern\":\"main\",\"include\":\"*.c\"}", 5000, &error);
+    CHECK(result != NULL);
+    CHECK(error == NULL);
+    /* Should find main somewhere */
+    CHECK(strstr(result, "main") != NULL);
+    free(result);
+    OK();
+}
+
 static void test_tool_not_found(void) {
     TEST("tool not found");
     char *error = NULL;
@@ -122,6 +177,9 @@ int main(void) {
     test_write_file();
     test_bash_tool();
     test_think_tool();
+    test_edit_tool();
+    test_glob_tool();
+    test_grep_tool();
     test_tool_not_found();
     printf("  %d/%d passed\n", passed, tests);
     return passed == tests ? 0 : 1;

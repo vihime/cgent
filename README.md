@@ -25,14 +25,15 @@ export DEEPSEEK_API_KEY="sk-your-key"        # env var
 - **Linux** (primary target), macOS/Windows via MinGW (planned)
 - **gcc 11+** or clang with C11 support
 - **OpenSSL** (libssl-dev, libcrypto-dev) — for HTTPS
+- **curl** (recommended) — for `web_fetch` and `web_search` tools
 - **make** — build system
 
 ```bash
 # Ubuntu/Debian
-sudo apt install build-essential libssl-dev
+sudo apt install build-essential libssl-dev curl
 
 # macOS
-brew install openssl
+brew install openssl curl
 ```
 
 ## Configuration
@@ -156,8 +157,13 @@ Examples:
 |---|---|
 | `read_file` | Read a file from disk |
 | `write_file` | Write content to a file |
+| `edit` | Exact string replacement in a file |
 | `bash` | Execute a shell command |
 | `think` | Record a thought (chain-of-thought) |
+| `glob` | Find files matching a glob pattern |
+| `grep` | Search for text patterns in files |
+| `web_fetch` | Fetch content from a URL |
+| `web_search` | Perform a web search |
 | `spawn_subagent` | Spawn a child cgent process for parallel work |
 
 ## Architecture
@@ -213,7 +219,7 @@ The HTTP client is implemented directly over raw OpenSSL sockets — no libcurl,
 ```bash
 make              # Build cgent (dynamic)
 make static       # Static binary (needs libzstd-static)
-make test         # Run all unit tests (22 tests)
+make test         # Run all unit tests (25 tests)
 make clean        # Remove build artifacts
 make install      # Install to $PREFIX/bin
 ```
@@ -226,7 +232,7 @@ make -C test test-integration                  # 8 integration tests (needs API 
 DEEPSEEK_API_KEY=sk-xxx make -C test test-subagent  # 3 subagent tests
 ```
 
-Tests cover: JSON parsing, message lifecycle, config/AGENTS.md parsing, tool registry, tool execution (read_file, write_file, bash, think), memory leak stress (1000+ iterations), mock HTTP backend, multi-turn chat, code generation, and subagent spawning.
+Tests cover: JSON parsing, message lifecycle, config/AGENTS.md parsing, tool registry, tool execution (read_file, write_file, edit, bash, think, glob, grep), memory leak stress (1000+ iterations), mock HTTP backend, multi-turn chat, code generation, and subagent spawning.
 
 ## Contributing
 

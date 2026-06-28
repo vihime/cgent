@@ -1,5 +1,5 @@
 /*
- * builtin_tools.c — Built-in tools (read_file, write_file, bash, think, subagent)
+ * builtin_tools.c — Built-in tools (read_file, write_file, edit, bash, think, glob, grep, subagent)
  */
 #include "tools.h"
 #include "json.h"
@@ -227,6 +227,339 @@ static char *tool_spawn_subagent(const char *name, const char *args_json, char *
     return out_str;
 }
 
+/* ── edit ─────────────────────────────────────────────────────── */
+
+static char *tool_edit(const char *name, const char *args_json, char **error) {
+    (void)name;
+    json_value_t *args = json_parse(args_json);
+    if (!args) {
+        if (error) *error = strdup("Invalid JSON arguments");
+        return NULL;
+    }
+
+    json_value_t *path_val   = json_object_get(args, "file_path");
+    json_value_t *old_val    = json_object_get(args, "old_string");
+    json_value_t *new_val    = json_object_get(args, "new_string");
+
+    if (!path_val || !json_is_string(path_val)) {
+        if (error) *error = strdup("Missing 'file_path' argument");
+        json_free(args); return NULL;
+    }
+    if (!old_val || !json_is_string(old_val)) {
+        if (error) *error = strdup("Missing 'old_string' argument");
+        json_free(args); return NULL;
+    }
+    if (!new_val || !json_is_string(new_val)) {
+        if (error) *error = strdup("Missing 'new_string' argument");
+        json_free(args); return NULL;
+    }
+
+    const char *path    = json_string_value(path_val);
+    const char *old_str = json_string_value(old_val);
+    const char *new_str = json_string_value(new_val);
+
+    /* Read the file */
+    FILE *fp = fopen(path, "r");
+    if (!fp) {
+        char buf[512];
+        snprintf(buf, sizeof(buf), "Cannot read file: %s", path);
+        if (error) *error = strdup(buf);
+        json_free(args); return NULL;
+    }
+    fseek(fp, 0, SEEK_END);
+    long sz = ftell(fp);
+    fseek(fp, 0, SEEK_SET);
+    char *content = malloc(sz + 1);
+    if (!content) { fclose(fp); json_free(args); return NULL; }
+    size_t nread = fread(content, 1, sz, fp);
+    content[nread] = '\0';
+    fclose(fp);
+
+    /* Find old_string */
+    char *found = strstr(content, old_str);
+    if (!found) {
+        free(content);
+        if (error) *error = strdup("old_string not found in file");
+        json_free(args); return NULL;
+    }
+
+    /* Check uniqueness */
+    if (strstr(found + strlen(old_str), old_str)) {
+        free(content);
+        if (error) *error = strdup("old_string is not unique in file");
+        json_free(args); return NULL;
+    }
+
+    /* Build replacement */
+    size_t new_len = strlen(new_str);
+    size_t old_len = strlen(old_str);
+    size_t prefix  = found - content;
+    size_t suffix  = nread - prefix - old_len;
+    size_t total   = prefix + new_len + suffix;
+
+    char *result = malloc(total + 1);
+    if (!result) { free(content); json_free(args); return NULL; }
+    memcpy(result, content, prefix);
+    memcpy(result + prefix, new_str, new_len);
+    memcpy(result + prefix + new_len, found + old_len, suffix);
+    result[total] = '\0';
+    free(content);
+
+    /* Write back */
+    fp = fopen(path, "w");
+    if (!fp) {
+        free(result);
+        if (error) *error = strdup("Cannot write file");
+        json_free(args); return NULL;
+    }
+    fputs(result, fp);
+    fclose(fp);
+    free(result);
+
+    json_value_t *out = json_object();
+    json_object_set(out, "success", json_bool(true));
+    char *out_str = json_stringify(out);
+    json_free(out);
+    json_free(args);
+    return out_str;
+}
+
+/* ── glob ─────────────────────────────────────────────────────── */
+
+static char *tool_glob(const char *name, const char *args_json, char **error) {
+    (void)name;
+    json_value_t *args = json_parse(args_json);
+    if (!args) {
+        if (error) *error = strdup("Invalid JSON arguments");
+        return NULL;
+    }
+
+    json_value_t *pattern_val = json_object_get(args, "pattern");
+    if (!pattern_val || !json_is_string(pattern_val)) {
+        if (error) *error = strdup("Missing 'pattern' argument");
+        json_free(args); return NULL;
+    }
+
+    const char *pattern = json_string_value(pattern_val);
+
+    /* Use find to locate files matching pattern */
+    char cmd[2048];
+    /* Escape quotes in pattern for shell safety */
+    snprintf(cmd, sizeof(cmd),
+             "find . -path './.git' -prune -o -path './third_party' -prune "
+             "-o -name '%s' -print 2>/dev/null | head -200", pattern);
+
+    int exit_code;
+    char *output = os_exec_capture(cmd, &exit_code);
+
+    json_value_t *out = json_object();
+    json_value_t *files = json_array();
+
+    if (output && output[0]) {
+        /* Split output by newlines */
+        char *saveptr;
+        char *line = strtok_r(output, "\n", &saveptr);
+        while (line) {
+            /* Strip leading ./ */
+            if (strncmp(line, "./", 2) == 0) line += 2;
+            if (line[0]) json_array_append(files, json_string(line));
+            line = strtok_r(NULL, "\n", &saveptr);
+        }
+    }
+    free(output);
+
+    json_object_set(out, "files", files);
+    json_object_set(out, "count", json_number(json_array_length(files)));
+
+    char *out_str = json_stringify(out);
+    json_free(out);
+    json_free(args);
+    return out_str;
+}
+
+/* ── grep ─────────────────────────────────────────────────────── */
+
+static char *tool_grep(const char *name, const char *args_json, char **error) {
+    (void)name;
+    json_value_t *args = json_parse(args_json);
+    if (!args) {
+        if (error) *error = strdup("Invalid JSON arguments");
+        return NULL;
+    }
+
+    json_value_t *pattern_val = json_object_get(args, "pattern");
+    if (!pattern_val || !json_is_string(pattern_val)) {
+        if (error) *error = strdup("Missing 'pattern' argument");
+        json_free(args); return NULL;
+    }
+
+    const char *pattern  = json_string_value(pattern_val);
+    const char *include  = NULL;
+    json_value_t *inc_val = json_object_get(args, "include");
+    if (inc_val && json_is_string(inc_val)) include = json_string_value(inc_val);
+
+    /* Build grep command */
+    char cmd[4096];
+    if (include) {
+        /* Escape single quotes in pattern */
+        snprintf(cmd, sizeof(cmd),
+                 "grep -rn --include='%s' '%s' . "
+                 "--exclude-dir=.git --exclude-dir=third_party "
+                 "--exclude-dir=.cgent 2>/dev/null | head -200",
+                 include, pattern);
+    } else {
+        snprintf(cmd, sizeof(cmd),
+                 "grep -rn '%s' . "
+                 "--exclude-dir=.git --exclude-dir=third_party "
+                 "--exclude-dir=.cgent 2>/dev/null | head -200",
+                 pattern);
+    }
+
+    int exit_code;
+    char *output = os_exec_capture(cmd, &exit_code);
+
+    json_value_t *out = json_object();
+    json_value_t *matches = json_array();
+
+    if (output && output[0]) {
+        char *saveptr;
+        char *line = strtok_r(output, "\n", &saveptr);
+        while (line) {
+            /* Strip leading ./ */
+            if (strncmp(line, "./", 2) == 0) line += 2;
+            if (line[0]) {
+                /* Parse file:line:content */
+                json_value_t *m = json_object();
+                char *colon1 = strchr(line, ':');
+                if (colon1) {
+                    *colon1 = '\0';
+                    json_object_set(m, "file", json_string(line));
+                    char *colon2 = strchr(colon1 + 1, ':');
+                    if (colon2) {
+                        *colon2 = '\0';
+                        json_object_set(m, "line", json_number(atoi(colon1 + 1)));
+                        json_object_set(m, "content", json_string(colon2 + 1));
+                    }
+                    *colon1 = ':';
+                    if (colon2) *colon2 = ':';
+                }
+                json_array_append(matches, m);
+            }
+            line = strtok_r(NULL, "\n", &saveptr);
+        }
+    }
+    free(output);
+
+    json_object_set(out, "matches", matches);
+    json_object_set(out, "count", json_number(json_array_length(matches)));
+
+    char *out_str = json_stringify(out);
+    json_free(out);
+    json_free(args);
+    return out_str;
+}
+
+/* ── web_fetch ─────────────────────────────────────────────────── */
+
+static char *tool_web_fetch(const char *name, const char *args_json, char **error) {
+    (void)name;
+    json_value_t *args = json_parse(args_json);
+    if (!args) {
+        if (error) *error = strdup("Invalid JSON arguments");
+        return NULL;
+    }
+
+    json_value_t *url_val = json_object_get(args, "url");
+    if (!url_val || !json_is_string(url_val)) {
+        if (error) *error = strdup("Missing 'url' argument");
+        json_free(args); return NULL;
+    }
+
+    const char *url = json_string_value(url_val);
+
+    /* Use curl to fetch the URL */
+    char cmd[4096];
+    snprintf(cmd, sizeof(cmd),
+             "curl -sL --max-time 30 --connect-timeout 10 "
+             "-H 'User-Agent: cgent/0.1' '%s' 2>/dev/null | head -c 65536",
+             url);
+
+    int exit_code;
+    char *output = os_exec_capture(cmd, &exit_code);
+
+    json_value_t *out = json_object();
+    if (output && output[0]) {
+        json_object_set(out, "content", json_string(output));
+        json_object_set(out, "length", json_number(strlen(output)));
+    } else {
+        json_object_set(out, "content", json_string(""));
+        json_object_set(out, "length", json_number(0));
+        json_object_set(out, "error", json_string("Failed to fetch URL"));
+    }
+    json_object_set(out, "status_code", json_number(exit_code == 0 ? 200 : 0));
+
+    free(output);
+
+    char *out_str = json_stringify(out);
+    json_free(out);
+    json_free(args);
+    return out_str;
+}
+
+/* ── web_search ─────────────────────────────────────────────────── */
+
+static char *tool_web_search(const char *name, const char *args_json, char **error) {
+    (void)name;
+    json_value_t *args = json_parse(args_json);
+    if (!args) {
+        if (error) *error = strdup("Invalid JSON arguments");
+        return NULL;
+    }
+
+    json_value_t *query_val = json_object_get(args, "query");
+    if (!query_val || !json_is_string(query_val)) {
+        if (error) *error = strdup("Missing 'query' argument");
+        json_free(args); return NULL;
+    }
+
+    const char *query = json_string_value(query_val);
+
+    /* Use curl to fetch search results from DuckDuckGo HTML */
+    char cmd[8192];
+    /* URL-encode the query (basic: replace spaces and special chars) */
+    snprintf(cmd, sizeof(cmd),
+             "curl -sL --max-time 30 --connect-timeout 10 "
+             "-H 'User-Agent: cgent/0.1' "
+             "'https://html.duckduckgo.com/html/?q=%s' 2>/dev/null | "
+             "grep -oP 'class=\"result__snippet\">\\K[^<]+' | head -20",
+             query);
+
+    int exit_code;
+    char *output = os_exec_capture(cmd, &exit_code);
+
+    json_value_t *out = json_object();
+    json_value_t *results = json_array();
+
+    if (output && output[0]) {
+        char *saveptr;
+        char *line = strtok_r(output, "\n", &saveptr);
+        while (line) {
+            while (*line == ' ') line++;
+            if (line[0]) json_array_append(results, json_string(line));
+            line = strtok_r(NULL, "\n", &saveptr);
+        }
+    }
+    free(output);
+
+    json_object_set(out, "results", results);
+    json_object_set(out, "count", json_number(json_array_length(results)));
+
+    char *out_str = json_stringify(out);
+    json_free(out);
+    json_free(args);
+    return out_str;
+}
+
 /* ── Registration ───────────────────────────────────────────────── */
 
 void builtin_tools_register(void) {
@@ -289,6 +622,68 @@ void builtin_tools_register(void) {
             "\"system_prompt\":{\"type\":\"string\",\"description\":\"System prompt for the subagent\"}},"
             "\"required\":[\"task\"]}",
             tool_spawn_subagent);
+        tool_registry_add(t);
+    }
+
+    /* edit */
+    {
+        tool_t *t = tool_create("edit",
+            "Performs exact string replacement in a file. "
+            "The old_string must match exactly and be unique in the file. "
+            "Use this to make precise edits to source code.",
+            "{\"type\":\"object\",\"properties\":{"
+            "\"file_path\":{\"type\":\"string\",\"description\":\"Path to the file to edit\"},"
+            "\"old_string\":{\"type\":\"string\",\"description\":\"Exact text to find and replace\"},"
+            "\"new_string\":{\"type\":\"string\",\"description\":\"Replacement text\"}},"
+            "\"required\":[\"file_path\",\"old_string\",\"new_string\"]}",
+            tool_edit);
+        tool_registry_add(t);
+    }
+
+    /* glob */
+    {
+        tool_t *t = tool_create("glob",
+            "Find files matching a glob pattern. "
+            "Returns relative file paths. Excludes .git and third_party.",
+            "{\"type\":\"object\",\"properties\":{"
+            "\"pattern\":{\"type\":\"string\",\"description\":\"Glob pattern like '*.c' or 'src/*.h'\"}},"
+            "\"required\":[\"pattern\"]}",
+            tool_glob);
+        tool_registry_add(t);
+    }
+
+    /* grep */
+    {
+        tool_t *t = tool_create("grep",
+            "Search for a text pattern in files. Returns matching lines "
+            "with file path, line number, and content.",
+            "{\"type\":\"object\",\"properties\":{"
+            "\"pattern\":{\"type\":\"string\",\"description\":\"Text pattern to search for\"},"
+            "\"include\":{\"type\":\"string\",\"description\":\"Optional file pattern filter (e.g. '*.c')\"}},"
+            "\"required\":[\"pattern\"]}",
+            tool_grep);
+        tool_registry_add(t);
+    }
+
+    /* web_fetch */
+    {
+        tool_t *t = tool_create("web_fetch",
+            "Fetches content from a specified URL and returns it as text.",
+            "{\"type\":\"object\",\"properties\":{"
+            "\"url\":{\"type\":\"string\",\"description\":\"The URL to fetch content from\"}},"
+            "\"required\":[\"url\"]}",
+            tool_web_fetch);
+        tool_registry_add(t);
+    }
+
+    /* web_search */
+    {
+        tool_t *t = tool_create("web_search",
+            "Performs web searches and returns a list of result snippets.",
+            "{\"type\":\"object\",\"properties\":{"
+            "\"query\":{\"type\":\"string\",\"description\":\"The search query\"}},"
+            "\"required\":[\"query\"]}",
+            tool_web_search);
         tool_registry_add(t);
     }
 }
