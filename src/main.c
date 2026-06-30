@@ -247,6 +247,7 @@ int main(int argc, char **argv) {
                     printf("  /clear        — Clear conversation history\n");
                     printf("  /tools        — List available tools\n");
                     printf("  /model [name] — List models or switch to <name>\n");
+                    printf("  /skills       — List loaded skills\n");
                     printf("\nOr just type a message to chat with the agent.\n");
                 } else if (strcmp(line, "/clear") == 0) {
                     for (int i = 0; i < agent->n_messages; i++)
@@ -259,6 +260,17 @@ int main(int argc, char **argv) {
                         printf("  - %s: %s\n",
                                agent->tools[i].name,
                                agent->tools[i].description);
+                    }
+                } else if (strcmp(line, "/skills") == 0) {
+                    if (cfg->skills && cfg->skills->count > 0) {
+                        printf("Loaded skills (%d):\n", cfg->skills->count);
+                        for (int i = 0; i < cfg->skills->count; i++) {
+                            skill_t *s = &cfg->skills->skills[i];
+                            printf("  %-24s  %s\n", s->name,
+                                   s->description ? s->description : "");
+                        }
+                    } else {
+                        printf("No skills loaded.\n");
                     }
                 } else if (strncmp(line, "/model", 6) == 0) {
                     if (line[6] == ' ' && line[7]) {
