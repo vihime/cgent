@@ -237,6 +237,8 @@ int main(int argc, char **argv) {
             bool handled = false;
             if (line[0] == '/') {
                 handled = true;
+
+                /* Exact-match commands */
                 if (strcmp(line, "/quit") == 0 || strcmp(line, "/exit") == 0) {
                     free(line);
                     break;
@@ -248,6 +250,15 @@ int main(int argc, char **argv) {
                     printf("  /tools        — List available tools\n");
                     printf("  /model [name] — List models or switch to <name>\n");
                     printf("  /skills       — List loaded skills\n");
+                    if (cfg->skills && cfg->skills->count > 0) {
+                        printf("\nSkill commands:\n");
+                        for (int i = 0; i < cfg->skills->count; i++) {
+                            printf("  /%-14s %s\n",
+                                   cfg->skills->skills[i].name,
+                                   cfg->skills->skills[i].description
+                                       ? cfg->skills->skills[i].description : "");
+                        }
+                    }
                     printf("\nOr just type a message to chat with the agent.\n");
                 } else if (strcmp(line, "/clear") == 0) {
                     for (int i = 0; i < agent->n_messages; i++)
@@ -256,11 +267,8 @@ int main(int argc, char **argv) {
                     printf("Conversation cleared.\n");
                 } else if (strcmp(line, "/tools") == 0) {
                     printf("Available tools (%d):\n", agent->n_tools);
-                    for (int i = 0; i < agent->n_tools; i++) {
-                        printf("  - %s: %s\n",
-                               agent->tools[i].name,
-                               agent->tools[i].description);
-                    }
+                    for (int i = 0; i < agent->n_tools; i++)
+                        printf("  - %s: %s\n", agent->tools[i].name, agent->tools[i].description);
                 } else if (strcmp(line, "/skills") == 0) {
                     if (cfg->skills && cfg->skills->count > 0) {
                         printf("Loaded skills (%d):\n", cfg->skills->count);
@@ -272,46 +280,74 @@ int main(int argc, char **argv) {
                     } else {
                         printf("No skills loaded.\n");
                     }
-                } else if (strncmp(line, "/model", 6) == 0) {
-                    if (line[6] == ' ' && line[7]) {
-                        /* /model <name> — switch model */
-                        const char *model_name = line + 7;
-                        if (config_switch_model(cfg, model_name) == 0) {
-                            /* Update agent's provider config */
-                            free(agent->provider.api_key);
-                            agent->provider.api_key = cfg->api_key ? strdup(cfg->api_key) : NULL;
-                            free(agent->provider.base_url);
-                            agent->provider.base_url = cfg->base_url ? strdup(cfg->base_url) : NULL;
-                            free(agent->provider.model);
-                            agent->provider.model = strdup(cfg->model);
-                            agent->provider.temperature = cfg->temperature;
-                            agent->provider.max_tokens = cfg->max_tokens;
-                            agent->provider.stream = cfg->stream;
-                            printf("Model changed to: %s (provider: %s)\n",
-                                   cfg->model, cfg->provider);
-                        } else {
-                            printf("Unknown model: %s. Available models:\n", model_name);
-                            for (int i = 0; i < cfg->model_count; i++) {
-                                printf("  - %s (%s)\n",
-                                       cfg->models[i].name, cfg->models[i].provider);
-                            }
-                        }
-                    } else {
-                        /* /model without args — list available models */
-                        printf("Available models (%d):\n", cfg->model_count);
-                        for (int i = 0; i < cfg->model_count; i++) {
-                            const char *mark = (i == cfg->active_model) ? " *" : "  ";
-                            printf("%s%s (%s)\n", mark,
-                                   cfg->models[i].name, cfg->models[i].provider);
-                        }
-                        printf("Use /model <name> to switch.\n");
+                } else if (strcmp(line, "/model") == 0) {
+                    /* /model without args — list models */
+                    printf("Available models (%d):\n", cfg->model_count);
+                    for (int i = 0; i < cfg->model_count; i++) {
+                        const char *mark = (i == cfg->active_model) ? " *" : "  ";
+                        printf("%s%s (%s)\n", mark,
+                               cfg->models[i].name, cfg->models[i].provider);
                     }
+                    printf("Use /model <name> to switch.\n");
+                } else if (strncmp(line, "/model ", 7) == 0) {
+                    /* /model <name> — switch model */
+                    const char *model_name = line + 7;
+                    if (config_switch_model(cfg, model_name) == 0) {
+                        free(agent->provider.api_key);
+                        agent->provider.api_key = cfg->api_key ? strdup(cfg->api_key) : NULL;
+                        free(agent->provider.base_url);
+                        agent->provider.base_url = cfg->base_url ? strdup(cfg->base_url) : NULL;
+                        free(agent->provider.model);
+                        agent->provider.model = strdup(cfg->model);
+                        agent->provider.temperature = cfg->temperature;
+                        agent->provider.max_tokens = cfg->max_tokens;
+                        agent->provider.stream = cfg->stream;
+                        printf("Model changed to: %s (provider: %s)\n",
+                               cfg->model, cfg->provider);
+                    } else {
+                        printf("Unknown model: %s. Available models:\n", model_name);
+                        for (int i = 0; i < cfg->model_count; i++)
+                            printf("  - %s (%s)\n", cfg->models[i].name, cfg->models[i].provider);
+                    }
+                } else if (cfg->skills && cfg->skills->count > 0) {
+                    /* Check if this is a skill command (e.g. /code-review) */
+                    char *space = strchr(line, ' ');
+                    size_t cmd_len = space ? (size_t)(space - line) : strlen(line);
+                    char *cmd_name = strndup(line, cmd_len);
+                    skill_t *sk = skills_find_by_trigger(cfg->skills, cmd_name);
+
+                    if (sk) {
+                        const char *params = space ? space + 1 : "";
+                        while (*params == ' ') params++;
+
+                        /* Build prompt combining skill instruction with user params */
+                        size_t task_sz = strlen(sk->instruction) + strlen(params) + 512;
+                        char *task_buf = malloc(task_sz);
+                        if (params[0]) {
+                            snprintf(task_buf, task_sz,
+                                     "Invoke skill '%s' with input: %s\n\n%s",
+                                     sk->name, params, sk->instruction);
+                        } else {
+                            snprintf(task_buf, task_sz,
+                                     "Invoke skill '%s'.\n\n%s",
+                                     sk->name, sk->instruction);
+                        }
+                        printf("Invoking skill: %s\n", sk->name);
+                        handled = false;
+                        free(line);
+                        line = task_buf;
+                    } else {
+                        printf("Unknown command: %s (try /help)\n", line);
+                    }
+                    free(cmd_name);
                 } else {
                     printf("Unknown command: %s (try /help)\n", line);
                 }
+
+                if (handled) { free(line); continue; }
             }
 
-            /* Send to agent (unless handled as slash command) */
+            /* Send to agent */
             if (!handled) {
                 if (cfg->stream) {
                     agent_chat_stream(agent, line, on_token, NULL);
@@ -319,11 +355,9 @@ int main(int argc, char **argv) {
                 } else {
                     message_t *resp = agent_chat(agent, line);
                     if (resp) {
-                        if (resp->content)
-                            printf("%s\n", resp->content);
-                        if (resp->n_tool_calls > 0) {
+                        if (resp->content) printf("%s\n", resp->content);
+                        if (resp->n_tool_calls > 0)
                             printf("[Used %d tool(s)]\n", resp->n_tool_calls);
-                        }
                         message_free(resp);
                     }
                 }
