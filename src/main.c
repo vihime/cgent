@@ -112,11 +112,12 @@ static char *tab_complete(const char *input) {
     }
 
     /* Multiple matches — show them, return common prefix */
-    printf("\n");
+    if (write(STDOUT_FILENO, "\r\n", 2) < 0) {}
     for (int i = 0; i < n_matches; i++) {
-        printf("  %s\n", matches[i]);
+        if (write(STDOUT_FILENO, "  ", 2) < 0) {}
+        if (write(STDOUT_FILENO, matches[i], strlen(matches[i])) < 0) {}
+        if (write(STDOUT_FILENO, "\r\n", 2) < 0) {}
     }
-    printf("\n");
 
     /* Compute common prefix of all matches */
     char *common = strdup(matches[0]);
@@ -126,9 +127,9 @@ static char *tab_complete(const char *input) {
         common = new_common;
     }
 
-    /* Re-display prompt + current input */
-    printf("> %s", common);
-    fflush(stdout);
+    /* Re-display prompt + current input on a clean line */
+    if (write(STDOUT_FILENO, "> ", 2) < 0) {}
+    if (write(STDOUT_FILENO, common, strlen(common)) < 0) {}
 
     return common;
 }
