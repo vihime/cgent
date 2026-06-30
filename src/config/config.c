@@ -51,25 +51,26 @@ static void add_default_model(cgent_config_t *cfg, const char *name,
     m->stream      = true;
 }
 
+static void add_default_models(cgent_config_t *cfg) {
+    add_default_model(cfg, "deepseek-chat",    "deepseek",  "https://api.deepseek.com");
+    add_default_model(cfg, "deepseek-reasoner","deepseek",  "https://api.deepseek.com");
+    add_default_model(cfg, "gpt-4o",           "openai",    "https://api.openai.com");
+    add_default_model(cfg, "gpt-4o-mini",      "openai",    "https://api.openai.com");
+    add_default_model(cfg, "claude-sonnet-4-6","anthropic", "https://api.anthropic.com");
+    add_default_model(cfg, "claude-opus-4-8",  "anthropic", "https://api.anthropic.com");
+}
+
 static cgent_config_t defaults(void) {
     cgent_config_t cfg = {0};
 
-    /* Pre-register known models with defaults */
-    add_default_model(&cfg, "deepseek-chat",    "deepseek",  "https://api.deepseek.com");
-    add_default_model(&cfg, "deepseek-reasoner","deepseek",  "https://api.deepseek.com");
-    add_default_model(&cfg, "gpt-4o",           "openai",    "https://api.openai.com");
-    add_default_model(&cfg, "gpt-4o-mini",      "openai",    "https://api.openai.com");
-    add_default_model(&cfg, "claude-sonnet-4-6","anthropic", "https://api.anthropic.com");
-    add_default_model(&cfg, "claude-opus-4-8",  "anthropic", "https://api.anthropic.com");
-
-    cfg.active_model  = 0;  /* deepseek-chat */
-    cfg.provider      = strdup(cfg.models[0].provider);
-    cfg.model         = strdup(cfg.models[0].name);
+    cfg.active_model  = -1;  /* Will be set after models are loaded */
+    cfg.provider      = strdup("deepseek");
+    cfg.model         = strdup("deepseek-chat");
     cfg.api_key       = NULL;
-    cfg.base_url      = strdup(cfg.models[0].base_url);
-    cfg.temperature   = cfg.models[0].temperature;
-    cfg.max_tokens    = cfg.models[0].max_tokens;
-    cfg.stream        = cfg.models[0].stream;
+    cfg.base_url      = strdup("https://api.deepseek.com");
+    cfg.temperature   = 0.7;
+    cfg.max_tokens    = 4096;
+    cfg.stream        = true;
     cfg.agent_dir     = strdup("agents/cgent/");
     cfg.system_prompt = NULL;
     cfg.verbose       = false;
@@ -152,7 +153,16 @@ static void apply_settings_file(cgent_config_t *cfg) {
         }
     }
 
-    /* Set active model from default_model or keep first */
+    /* If settings.json defined models, use only those.
+     * Otherwise, add built-in defaults so the agent still works. */
+    int models_from_settings = (models_obj && json_is_object(models_obj)
+                                && json_object_size(models_obj) > 0);
+
+    if (!models_from_settings) {
+        add_default_models(cfg);
+    }
+
+    /* Set active model from default_model or first */
     if (default_name) {
         for (int i = 0; i < cfg->model_count; i++) {
             if (strcmp(cfg->models[i].name, default_name) == 0) {
@@ -219,8 +229,10 @@ static void apply_env(cgent_config_t *cfg) {
 
 static void resolve_active_model(cgent_config_t *cfg) {
     if (cfg->active_model < 0 || cfg->active_model >= cfg->model_count) {
-        cfg->active_model = 0;
+        cfg->active_model = cfg->model_count > 0 ? 0 : -1;
     }
+    if (cfg->active_model < 0) return;  /* No models available */
+
     model_entry_t *m = &cfg->models[cfg->active_model];
 
     free(cfg->provider);  cfg->provider  = strdup(m->provider);
