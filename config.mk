@@ -9,8 +9,12 @@ CC      = gcc
 AR      = ar
 
 # Base flags
-CFLAGS_BASE  = -std=c11 -Wall -Wextra -Wpedantic -g -O2
+CFLAGS_BASE  = -std=c11 -Wall -Wextra -Wpedantic -g -Os
 CFLAGS_BASE += -D_DEFAULT_SOURCE -D_POSIX_C_SOURCE=200809L
+
+# Size optimization: strip symbols, remove unused sections
+CFLAGS_SMALL  = -fdata-sections -ffunction-sections -flto
+LDFLAGS_SMALL = -Wl,--gc-sections -s
 
 # Include paths
 CFLAGS_BASE += -Iinclude -Ithird_party/cJSON
@@ -34,7 +38,7 @@ else
 endif
 
 CFLAGS  = $(CFLAGS_BASE)
-LDFLAGS = $(LDFLAGS_BASE)
+LDFLAGS = $(LDFLAGS_BASE) -s
 
 # Debug build
 ifdef DEBUG

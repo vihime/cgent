@@ -49,6 +49,16 @@ $(TARGET): $(ALL_OBJS)
 # Include generated dependencies
 -include $(ALL_DEPS)
 
+# Smallest possible binary (LTO + gc-sections + strip)
+# Requires clean rebuild for LTO; run: make clean && make small
+small: CFLAGS  += $(CFLAGS_SMALL)
+small: LDFLAGS += $(LDFLAGS_SMALL)
+small: $(ALL_OBJS)
+	@echo "  LD    $(TARGET)-small"
+	$(Q)$(CC) $(CFLAGS) -o $(TARGET)-small $^ $(LDFLAGS)
+	@echo "  Size:"
+	@ls -lh $(TARGET)-small | awk '{print "  " $$5 " " $$9}'
+
 # Static build (no shared library deps)
 static: CFLAGS  += -static
 static: LDFLAGS += -static -lz -lzstd
