@@ -364,34 +364,40 @@ int main(int argc, char **argv) {
                     } else {
                         printf("No skills loaded.\n");
                     }
-                } else if (strcmp(line, "/model") == 0) {
-                    /* /model without args — list models */
-                    printf("Available models (%d):\n", cfg->model_count);
-                    for (int i = 0; i < cfg->model_count; i++) {
-                        const char *mark = (i == cfg->active_model) ? " *" : "  ";
-                        printf("%s%s (%s)\n", mark,
-                               cfg->models[i].name, cfg->models[i].provider);
-                    }
-                    printf("Use /model <name> to switch.\n");
-                } else if (strncmp(line, "/model ", 7) == 0) {
-                    /* /model <name> — switch model */
-                    const char *model_name = line + 7;
-                    if (config_switch_model(cfg, model_name) == 0) {
-                        free(agent->provider.api_key);
-                        agent->provider.api_key = cfg->api_key ? strdup(cfg->api_key) : NULL;
-                        free(agent->provider.base_url);
-                        agent->provider.base_url = cfg->base_url ? strdup(cfg->base_url) : NULL;
-                        free(agent->provider.model);
-                        agent->provider.model = strdup(cfg->model);
-                        agent->provider.temperature = cfg->temperature;
-                        agent->provider.max_tokens = cfg->max_tokens;
-                        agent->provider.stream = cfg->stream;
-                        printf("Model changed to: %s (provider: %s)\n",
-                               cfg->model, cfg->provider);
+                } else if (strncmp(line, "/model", 6) == 0) {
+                    /* /model or /model <name> */
+                    const char *rest = line + 6;
+                    while (*rest == ' ') rest++;
+
+                    if (*rest == '\0') {
+                        /* /model without args — list models */
+                        printf("Available models (%d):\n", cfg->model_count);
+                        for (int i = 0; i < cfg->model_count; i++) {
+                            const char *mark = (i == cfg->active_model) ? " *" : "  ";
+                            printf("%s%s (%s)\n", mark,
+                                   cfg->models[i].name, cfg->models[i].provider);
+                        }
+                        printf("Use /model <name> to switch.\n");
                     } else {
-                        printf("Unknown model: %s. Available models:\n", model_name);
-                        for (int i = 0; i < cfg->model_count; i++)
-                            printf("  - %s (%s)\n", cfg->models[i].name, cfg->models[i].provider);
+                        /* /model <name> — switch model */
+                        const char *model_name = rest;
+                        if (config_switch_model(cfg, model_name) == 0) {
+                            free(agent->provider.api_key);
+                            agent->provider.api_key = cfg->api_key ? strdup(cfg->api_key) : NULL;
+                            free(agent->provider.base_url);
+                            agent->provider.base_url = cfg->base_url ? strdup(cfg->base_url) : NULL;
+                            free(agent->provider.model);
+                            agent->provider.model = strdup(cfg->model);
+                            agent->provider.temperature = cfg->temperature;
+                            agent->provider.max_tokens = cfg->max_tokens;
+                            agent->provider.stream = cfg->stream;
+                            printf("Model changed to: %s (provider: %s)\n",
+                                   cfg->model, cfg->provider);
+                        } else {
+                            printf("Unknown model: %s. Available models:\n", model_name);
+                            for (int i = 0; i < cfg->model_count; i++)
+                                printf("  - %s (%s)\n", cfg->models[i].name, cfg->models[i].provider);
+                        }
                     }
                 } else if (cfg->skills && cfg->skills->count > 0) {
                     /* Check if this is a skill command (e.g. /code-review) */
