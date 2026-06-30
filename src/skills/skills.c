@@ -1,8 +1,16 @@
 /*
  * skills.c — Skill loading from ~/.cgent/skills/
  *
- * Scans the skills directory for .md files, parses YAML frontmatter,
- * and builds a skill list available to the agent.
+ * Skill directory structure:
+ *   ~/.cgent/skills/
+ *     code-review/           ← directory name = skill name
+ *       SKILL.md             ← skill definition (YAML frontmatter + body)
+ *       scripts/             ← optional helper scripts
+ *     simplify/
+ *       SKILL.md
+ *
+ * The SKILL.md file uses the same format as AGENTS.md:
+ * YAML frontmatter with name, description, plus body text for instructions.
  */
 #include "skills.h"
 #include "config.h"
@@ -14,33 +22,39 @@
 #include <dirent.h>
 #include <sys/stat.h>
 
-/* ── YAML frontmatter parsing for skills ──────────────────────── */
+/* ── Parsing ────────────────────────────────────────────────────── */
 
-/* Parse a skill-specific YAML frontmatter.
- * Reuses the agent_md_t parser but also extracts the 'trigger' field.
- * The agent_md_parse function handles frontmatter + body split. */
-static skill_t *skill_parse_file(const char *filepath) {
+/* Parse a SKILL.md file. 'dir_name' is the skill directory name,
+ * used as fallback if frontmatter doesn't specify a name. */
+static skill_t *skill_parse_file(const char *filepath, const char *dir_name) {
     agent_md_t *am = agent_md_parse(filepath);
     if (!am) return NULL;
 
-    /* A valid skill must have at least a name */
-    if (!am->name) {
-        agent_md_free(am);
-        return NULL;
+    skill_t *skill = calloc(1, sizeof(skill_t));
+
+    /* Name: frontmatter > directory name */
+    if (am->name && am->name[0]) {
+        skill->name = am->name;
+        am->name = NULL;
+    } else {
+        skill->name = strdup(dir_name);
     }
 
-    skill_t *skill = calloc(1, sizeof(skill_t));
-    skill->name = am->name;          /* Transfer ownership */
-    am->name = NULL;
-    skill->description = am->description;
-    am->description = NULL;
-    skill->instruction = am->instruction;
-    am->instruction = NULL;
+    /* Description */
+    if (am->description) {
+        skill->description = am->description;
+        am->description = NULL;
+    }
+
+    /* Instruction (body text) */
+    if (am->instruction) {
+        skill->instruction = am->instruction;
+        am->instruction = NULL;
+    }
+
     skill->path = strdup(filepath);
 
-    /* 'trigger' is not a standard agent_md field, so we need to
-     * re-parse the frontmatter to extract it.
-     * For now, derive trigger from name: "/" + name */
+    /* Trigger from name: "/" + name */
     size_t tlen = strlen(skill->name) + 2;
     skill->trigger = malloc(tlen);
     snprintf(skill->trigger, tlen, "/%s", skill->name);
@@ -51,42 +65,39 @@ static skill_t *skill_parse_file(const char *filepath) {
 
 /* ── Directory scanning ────────────────────────────────────────── */
 
-static void scan_directory(skill_list_t *list, const char *dir_path) {
-    DIR *dir = opendir(dir_path);
+static void scan_skills_root(skill_list_t *list, const char *skills_dir) {
+    DIR *dir = opendir(skills_dir);
     if (!dir) return;
 
     struct dirent *entry;
     while ((entry = readdir(dir)) != NULL) {
-        /* Skip hidden files/dirs */
-        if (entry->d_name[0] == '.') continue;
+        if (entry->d_name[0] == '.') continue;  /* Skip hidden */
 
-        char *full_path = os_path_join(dir_path, entry->d_name);
-        if (!full_path) continue;
+        char *skill_dir = os_path_join(skills_dir, entry->d_name);
+        if (!skill_dir) continue;
 
         struct stat st;
-        if (stat(full_path, &st) != 0) { free(full_path); continue; }
+        if (stat(skill_dir, &st) != 0 || !S_ISDIR(st.st_mode)) {
+            free(skill_dir);
+            continue;  /* Only directories are skills */
+        }
 
-        if (S_ISDIR(st.st_mode)) {
-            /* Recurse into subdirectories */
-            scan_directory(list, full_path);
-        } else if (S_ISREG(st.st_mode)) {
-            /* Check if it's a .md file */
-            const char *ext = strrchr(entry->d_name, '.');
-            if (ext && strcmp(ext, ".md") == 0) {
-                skill_t *skill = skill_parse_file(full_path);
-                if (skill) {
-                    /* Ensure capacity */
-                    if (list->count >= list->capacity) {
-                        list->capacity = list->capacity ? list->capacity * 2 : 16;
-                        list->skills = realloc(list->skills,
-                            list->capacity * sizeof(skill_t));
-                    }
-                    list->skills[list->count++] = *skill;
-                    free(skill); /* Free wrapper, contents transferred */
+        /* Look for SKILL.md inside the skill directory */
+        char *skill_file = os_path_join(skill_dir, "SKILL.md");
+        if (skill_file && os_path_exists(skill_file)) {
+            skill_t *skill = skill_parse_file(skill_file, entry->d_name);
+            if (skill) {
+                if (list->count >= list->capacity) {
+                    list->capacity = list->capacity ? list->capacity * 2 : 16;
+                    list->skills = realloc(list->skills,
+                        list->capacity * sizeof(skill_t));
                 }
+                list->skills[list->count++] = *skill;
+                free(skill);
             }
         }
-        free(full_path);
+        free(skill_file);
+        free(skill_dir);
     }
     closedir(dir);
 }
@@ -103,7 +114,7 @@ skill_list_t *skills_load_directory(const char *dir_path) {
         return list; /* Empty list — no skills yet */
     }
 
-    scan_directory(list, dir_path);
+    scan_skills_root(list, dir_path);
     return list;
 }
 
