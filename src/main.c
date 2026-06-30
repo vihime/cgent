@@ -55,6 +55,86 @@ static void print_usage(const char *prog) {
     printf("  %s  (starts interactive REPL)\n", prog);
 }
 
+/* ── Tab completion ──────────────────────────────────────────────── */
+
+static cgent_config_t *g_completion_cfg = NULL;
+
+/* Find common prefix of two strings */
+static char *str_common_prefix(const char *a, const char *b) {
+    size_t i = 0;
+    while (a[i] && b[i] && a[i] == b[i]) i++;
+    char *r = malloc(i + 1);
+    memcpy(r, a, i);
+    r[i] = '\0';
+    return r;
+}
+
+static char *tab_complete(const char *input) {
+    /* Only complete slash commands */
+    if (!input || input[0] != '/') return NULL;
+
+    size_t ilen = strlen(input);
+
+    /* Built-in commands */
+    static const char *builtins[] = {
+        "/quit", "/exit", "/help", "/clear", "/tools", "/skills", "/model", NULL
+    };
+
+    /* Find matches: any builtin or skill that starts with our input */
+    const char *matches[64];
+    int n_matches = 0;
+
+    for (int i = 0; builtins[i]; i++) {
+        if (strncmp(builtins[i], input, ilen) == 0) {
+            matches[n_matches++] = builtins[i];
+        }
+    }
+
+    /* Check skill commands */
+    if (g_completion_cfg && g_completion_cfg->skills) {
+        for (int i = 0; i < g_completion_cfg->skills->count; i++) {
+            /* Build "/skillname" from trigger */
+            const char *trigger = g_completion_cfg->skills->skills[i].trigger;
+            if (trigger && strncmp(trigger, input, ilen) == 0) {
+                matches[n_matches++] = trigger;
+            }
+        }
+    }
+
+    if (n_matches == 0) return NULL;
+
+    if (n_matches == 1) {
+        /* Single match — return it with trailing space */
+        size_t mlen = strlen(matches[0]);
+        char *result = malloc(mlen + 2);
+        memcpy(result, matches[0], mlen);
+        result[mlen] = ' ';
+        result[mlen + 1] = '\0';
+        return result;
+    }
+
+    /* Multiple matches — show them, return common prefix */
+    printf("\n");
+    for (int i = 0; i < n_matches; i++) {
+        printf("%s  ", matches[i]);
+    }
+    printf("\n");
+
+    /* Compute common prefix of all matches */
+    char *common = strdup(matches[0]);
+    for (int i = 1; i < n_matches; i++) {
+        char *new_common = str_common_prefix(common, matches[i]);
+        free(common);
+        common = new_common;
+    }
+
+    /* Re-display prompt + current input */
+    printf("> %s", common);
+    fflush(stdout);
+
+    return common;
+}
+
 /* ── Streaming token callback ───────────────────────────────────── */
 
 static void on_token(const char *token, void *ctx) {
@@ -95,6 +175,10 @@ int main(int argc, char **argv) {
         return 1;
     }
     config_apply_cli(cfg, &args);
+
+    /* Set up tab completion */
+    g_completion_cfg = cfg;
+    utf8_set_completer(tab_complete);
 
     /* Re-resolve system prompt after CLI may have changed agent_dir */
     if (args.agent_dir) {

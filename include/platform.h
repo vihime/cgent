@@ -76,9 +76,15 @@ int64_t os_time_ms(void);
 
 /* ── UTF-8 aware terminal input ──────────────────────────────────── */
 
+/* Tab completion: given a partial input, return a malloc'd completion
+ * or NULL. Caller frees the returned string. */
+typedef char *(*tab_complete_fn)(const char *input);
+
+/* Set the tab completion callback (NULL to disable). */
+void utf8_set_completer(tab_complete_fn fn);
+
 /* Read a line from stdin with UTF-8 aware editing.
- * Handles backspace (full UTF-8 character deletion), Ctrl-D (EOF),
- * and basic cursor movement.
+ * Supports Tab for auto-completion (if completer is set).
  * Returns a malloc'd string (caller frees), or NULL on EOF. */
 char *utf8_readline(const char *prompt);
 

@@ -178,6 +178,14 @@ static void term_raw_disable(void) {
     g_term_raw = false;
 }
 
+/* ── Tab completion ──────────────────────────────────────────────── */
+
+static tab_complete_fn g_completer = NULL;
+
+void utf8_set_completer(tab_complete_fn fn) {
+    g_completer = fn;
+}
+
 /* ── Line editor with history ────────────────────────────────────── */
 
 #define LINE_INIT_CAP 256
@@ -282,6 +290,36 @@ char *utf8_readline(const char *prompt) {
             wwrite("^C\r\n", 4);
             term_raw_disable();
             return strdup("");
+        }
+
+        /* ── Tab completion ──────────────────────────────────── */
+        if (c == '\t' && g_completer) {
+            if (len == 0) continue;
+
+            buf[len] = '\0';
+            char *completion = g_completer(buf);
+            if (!completion) continue;
+
+            size_t clen = strlen(completion);
+
+            /* If the completion is a common prefix (no new characters),
+             * we can't expand further — print a bell for feedback */
+            if (clen <= len && strncmp(buf, completion, len) == 0) {
+                wwrite("\a", 1);  /* Bell */
+                free(completion);
+                continue;
+            }
+
+            /* Expand: replace buffer with completion */
+            while (clen + 1 > cap) { cap *= 2; buf = realloc(buf, cap); }
+            memcpy(buf, completion, clen);
+            len = clen;
+            cursor = len;
+
+            free(completion);
+            buf[len] = '\0';
+            redraw_full(prompt, buf, len, cursor);
+            continue;
         }
 
         /* ── Escape sequences (arrow keys) ──────────────────── */
