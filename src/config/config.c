@@ -186,29 +186,11 @@ static void apply_settings_file(cgent_config_t *cfg) {
 static void apply_env(cgent_config_t *cfg) {
     char *val;
 
-    /* Provider-specific API keys — apply to matching models */
-    val = os_getenv("DEEPSEEK_API_KEY");
+    /* CGENT_API_KEY applies to all models */
+    val = os_getenv("CGENT_API_KEY");
     if (val) {
         for (int i = 0; i < cfg->model_count; i++) {
-            if (strcmp(cfg->models[i].provider, "deepseek") == 0 && !cfg->models[i].api_key) {
-                cfg->models[i].api_key = strdup(val);
-            }
-        }
-        free(val);
-    }
-    val = os_getenv("OPENAI_API_KEY");
-    if (val) {
-        for (int i = 0; i < cfg->model_count; i++) {
-            if (strcmp(cfg->models[i].provider, "openai") == 0 && !cfg->models[i].api_key) {
-                cfg->models[i].api_key = strdup(val);
-            }
-        }
-        free(val);
-    }
-    val = os_getenv("ANTHROPIC_API_KEY");
-    if (val) {
-        for (int i = 0; i < cfg->model_count; i++) {
-            if (strcmp(cfg->models[i].provider, "anthropic") == 0 && !cfg->models[i].api_key) {
+            if (!cfg->models[i].api_key) {
                 cfg->models[i].api_key = strdup(val);
             }
         }

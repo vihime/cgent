@@ -196,9 +196,7 @@ static char *tool_spawn_subagent(const char *name, const char *args_json, char *
     };
 
     /* Resolve API key from environment (provider-specific) */
-    if (!cfg.api_key) cfg.api_key = os_getenv("DEEPSEEK_API_KEY");
-    if (!cfg.api_key) cfg.api_key = os_getenv("OPENAI_API_KEY");
-    if (!cfg.api_key) cfg.api_key = os_getenv("ANTHROPIC_API_KEY");
+    if (!cfg.api_key) cfg.api_key = os_getenv("CGENT_API_KEY");
 
     subagent_result_t *result = subagent_run(&cfg);
     free(cfg.api_key);

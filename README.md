@@ -11,7 +11,7 @@ Supports Anthropic, OpenAI, and DeepSeek APIs with tools, subagents, streaming, 
 make
 
 # Configure API key (choose one method)
-export DEEPSEEK_API_KEY="sk-your-key"        # env var
+export CGENT_API_KEY="sk-your-key"            # env var
 # or edit ~/.cgent/settings.json → deepseek-chat.api_key
 
 # Run
@@ -71,7 +71,7 @@ Each model has independent `api_key`, `base_url`, `temperature`, `max_tokens`, a
 
 1. Built-in defaults
 2. `~/.cgent/settings.json`
-3. Environment variables (`DEEPSEEK_API_KEY`, `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`)
+3. Environment variables (`CGENT_API_KEY`)
 4. `AGENTS.md` from agent directory
 5. CLI arguments (`--model`, `--api-key`, etc.)
 
@@ -122,9 +122,7 @@ Options:
   -V, --version            Show version
 
 Environment:
-  DEEPSEEK_API_KEY         DeepSeek API key
-  OPENAI_API_KEY           OpenAI API key
-  ANTHROPIC_API_KEY        Anthropic API key
+  CGENT_API_KEY            API key for all providers
   CGENT_MODEL              Default model
   CGENT_PROVIDER           Default provider
   CGENT_AGENT_DIR          Agent directory path
@@ -232,7 +230,7 @@ make install      # Install to $PREFIX/bin
 ```bash
 make test                                      # 22 unit tests
 make -C test test-integration                  # 8 integration tests (needs API key)
-DEEPSEEK_API_KEY=sk-xxx make -C test test-subagent  # 3 subagent tests
+CGENT_API_KEY=sk-xxx make -C test test-subagent     # 3 subagent tests
 ```
 
 Tests cover: JSON parsing, message lifecycle, config/AGENTS.md parsing, tool registry, tool execution (read_file, write_file, edit, bash, think, glob, grep), memory leak stress (1000+ iterations), mock HTTP backend, multi-turn chat, code generation, and subagent spawning.
