@@ -114,7 +114,7 @@ static char *tab_complete(const char *input) {
     /* Multiple matches — show them, return common prefix */
     printf("\n");
     for (int i = 0; i < n_matches; i++) {
-        printf("%s  ", matches[i]);
+        printf("  %s\n", matches[i]);
     }
     printf("\n");
 
