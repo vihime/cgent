@@ -125,7 +125,17 @@ int main(int argc, char **argv) {
                 cfg->temperature, cfg->max_tokens);
         fprintf(stderr, "[cgent] agent_dir=%s\n",
                 cfg->agent_dir ? cfg->agent_dir : "(none)");
-        fprintf(stderr, "[cgent] %d models available\n", cfg->model_count);
+        fprintf(stderr, "[cgent] %d models, %d skills\n",
+                cfg->model_count,
+                cfg->skills ? cfg->skills->count : 0);
+        if (cfg->skills && cfg->skills->count > 0) {
+            for (int i = 0; i < cfg->skills->count; i++) {
+                fprintf(stderr, "[cgent]   skill: %s — %s\n",
+                        cfg->skills->skills[i].name,
+                        cfg->skills->skills[i].description
+                            ? cfg->skills->skills[i].description : "");
+            }
+        }
     }
 
     /* Initialize subsystems */

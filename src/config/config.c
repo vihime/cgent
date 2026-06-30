@@ -20,6 +20,7 @@
 #include "config.h"
 #include "json.h"
 #include "platform.h"
+#include "skills.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -288,6 +289,19 @@ cgent_config_t *config_load(void) {
     char *prompt = config_resolve_agent_prompt(cfg->agent_dir);
     if (prompt) { free(cfg->system_prompt); cfg->system_prompt = prompt; }
 
+    /* Load skills from ~/.cgent/skills/ */
+    char *skills_dir = os_path_join(cfg->cgent_dir, "skills");
+    cfg->skills = skills_load_directory(skills_dir);
+    free(skills_dir);
+
+    if (cfg->skills && cfg->skills->count > 0 && cfg->system_prompt) {
+        char *enhanced = skills_build_prompt(cfg->skills, cfg->system_prompt);
+        if (enhanced) {
+            free(cfg->system_prompt);
+            cfg->system_prompt = enhanced;
+        }
+    }
+
     return cfg;
 }
 
@@ -307,6 +321,7 @@ void config_free(cgent_config_t *cfg) {
     free(cfg->system_prompt);
     free(cfg->config_path);
     free(cfg->cgent_dir);
+    skills_free(cfg->skills);
     for (int i = 0; i < cfg->mcp_server_count; i++)
         free(cfg->mcp_server_commands[i]);
     free(cfg->mcp_server_commands);

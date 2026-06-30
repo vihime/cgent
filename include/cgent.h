@@ -18,6 +18,7 @@
 #include "protocol.h"
 #include "core.h"
 #include "tools.h"
+#include "skills.h"
 
 /* Library version */
 #define CGENT_VERSION_MAJOR 0

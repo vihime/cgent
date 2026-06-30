@@ -6,6 +6,7 @@
 
 #include <stdbool.h>
 #include <stddef.h>
+#include "skills.h"
 
 /* ── AGENTS.md parsed content ──────────────────────────────────── */
 
@@ -66,6 +67,9 @@ typedef struct {
     /* Files */
     char *config_path;
     char *cgent_dir;
+
+    /* Skills */
+    skill_list_t *skills;
 
     /* MCP */
     char **mcp_server_commands;
