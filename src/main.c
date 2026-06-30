@@ -313,6 +313,11 @@ int main(int argc, char **argv) {
                 break; /* Ctrl-D or EOF */
             }
 
+            /* Trim trailing whitespace (Tab completion may add spaces) */
+            size_t linelen = strlen(line);
+            while (linelen > 0 && (line[linelen-1] == ' ' || line[linelen-1] == '\t'))
+                line[--linelen] = '\0';
+
             /* Skip empty lines */
             if (line[0] == '\0') { free(line); continue; }
 
