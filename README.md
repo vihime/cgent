@@ -214,10 +214,13 @@ User input → CLI/REPL → Agent Core → Protocol → HTTP/TLS → API
 
 The HTTP client is implemented directly over raw OpenSSL sockets — no libcurl, no libuv. The JSON parser is cJSON embedded as a single `.c`/`.h` pair (MIT license). Everything else is built from scratch in C11.
 
+Binary size: **95K** default (`-Os -s`), **79K** with `make small` (LTO + gc-sections).
+
 ## Build Targets
 
 ```bash
-make              # Build cgent (dynamic)
+make              # Build cgent (95K, -Os -s)
+make small        # Smallest binary (79K, LTO + gc-sections)
 make static       # Static binary (needs libzstd-static)
 make test         # Run all unit tests (25 tests)
 make clean        # Remove build artifacts
