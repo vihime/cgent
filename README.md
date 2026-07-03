@@ -18,6 +18,7 @@ export CGENT_API_KEY="sk-your-key"            # env var
 ./cgent -q "What is 2+2?"                     # single query
 ./cgent -q "Read /etc/hostname"               # with tool use
 ./cgent                                        # interactive REPL
+./cgent --resume <uuid>                        # resume a session
 ```
 
 ## Requirements
@@ -51,7 +52,18 @@ brew install openssl curl
       "base_url": "https://api.deepseek.com",
       "temperature": 0.7,
       "max_tokens": 4096,
-      "stream": true
+      "stream": true,
+      "context_length": 1000000
+    },
+    "deepseek-reasoner": {
+      "provider": "deepseek",
+      "api_key": "sk-your-key",
+      "base_url": "https://api.deepseek.com",
+      "temperature": 0.0,
+      "max_tokens": 8192,
+      "stream": true,
+      "thinking": {"type": "enabled"},
+      "reasoning_effort": "high"
     },
     "gpt-4o": {
       "provider": "openai",
@@ -100,6 +112,45 @@ You are a helpful assistant. Follow these rules...
 
 The body text after `---` becomes the system prompt.
 
+### Skills Directory
+
+Skills are loaded from `~/.cgent/skills/`, each skill is a subdirectory:
+
+```
+~/.cgent/skills/
+  code-review/
+    SKILL.md        # Skill definition (YAML frontmatter + instructions)
+    scripts/        # Optional helper scripts
+```
+
+Skills become REPL commands (e.g., `/code-review`) and appear in `/skills`.
+
+### Session Management
+
+Sessions are auto-saved to `~/.cgent/sessions/<uuid>/session.json` after each interaction. The session JSON contains the full conversation history, model config, and system prompt.
+
+```
+Session: f8ee8a4c-11ff-4f3b-8f17-b7e1dcd4d439
+> Hello
+...
+Resume: cgent --resume f8ee8a4c-11ff-4f3b-8f17-b7e1dcd4d439
+```
+
+The resume command is printed on exit for easy copy-paste.
+
+### Deep Thinking / Reasoning
+
+Configure chain-of-thought reasoning per model:
+
+```json
+"deepseek-reasoner": {
+  "thinking": {"type": "enabled"},
+  "reasoning_effort": "high"
+}
+```
+
+Also supports `"output_config": {"effort": "high"}` format.
+
 ## CLI Reference
 
 ```
@@ -117,6 +168,7 @@ Options:
   -M, --max-tokens <n>     Max output tokens (default: 4096)
   -n, --no-stream          Disable streaming output
   -c, --config <path>      Config file path
+  -r, --resume <uuid>      Resume a saved session
   -v, --verbose            Verbose/debug output
   -h, --help               Show this help
   -V, --version            Show version
@@ -142,8 +194,13 @@ Examples:
 | `/quit`, `/exit` | Exit REPL |
 | `/clear` | Clear conversation history |
 | `/tools` | List available tools |
+| `/agents` | List installed agents (`*` = active) |
+| `/context` | Show context usage breakdown |
 | `/model` | List available models (`*` = active) |
 | `/model <name>` | Switch to a different model |
+| `/skills` | List loaded skills |
+| `!<cmd>` | Execute a bash command (`!env`, `!ls`) |
+| **Tab** | Auto-complete slash commands |
 | **Up/Down arrows** | Navigate input history |
 | **Left/Right arrows** | Move cursor within input |
 | **Ctrl-D** | Exit (on empty line) |
@@ -176,6 +233,8 @@ cgent/
 │   ├── protocol.h     # API provider abstraction
 │   ├── tools.h        # Tool registry & execution
 │   ├── subagent.h     # Subagent spawning API
+│   ├── session.h      # Session persistence
+│   ├── skills.h       # Skill loading
 │   ├── http_mock.h    # Mock HTTP backend (testing)
 │   ├── json.h         # JSON wrapper (cJSON)
 │   └── platform.h     # OS abstraction & terminal I/O
@@ -186,6 +245,8 @@ cgent/
 │   ├── protocol/      # provider.c, deepseek.c, openai.c, anthropic.c
 │   ├── tools/         # tool_registry.c, tool_executor.c, builtin_tools.c
 │   ├── subagent/      # subagent.c (fork+exec with JSON IPC)
+│   ├── skills/        # skills.c (load from ~/.cgent/skills/)
+│   ├── session/       # session.c (save/restore to ~/.cgent/sessions/)
 │   ├── config/        # config.c, args.c, agent_md.c
 │   ├── json/          # json_wrapper.c
 │   └── platform/      # os.c, utf8_input.c
