@@ -182,6 +182,11 @@ int main(int argc, char **argv) {
     g_completion_cfg = cfg;
     utf8_set_completer(tab_complete);
 
+    /* Re-resolve model config after CLI may have changed model */
+    if (args.model && args.model[0]) {
+        config_switch_model(cfg, args.model);
+    }
+
     /* Re-resolve system prompt after CLI may have changed agent_dir */
     if (args.agent_dir) {
         char *prompt = config_resolve_agent_prompt(cfg->agent_dir);
