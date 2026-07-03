@@ -49,6 +49,11 @@ static void add_default_model(cgent_config_t *cfg, const char *name,
     m->temperature = 0.7;
     m->max_tokens  = 4096;
     m->stream      = true;
+    /* Set context length based on provider defaults */
+    if (strcmp(provider, "deepseek") == 0)      m->context_length = 1000000;
+    else if (strcmp(provider, "openai") == 0)   m->context_length = 128000;
+    else if (strcmp(provider, "anthropic") == 0) m->context_length = 200000;
+    else                                         m->context_length = 100000;
 }
 
 static void add_default_models(cgent_config_t *cfg) {
@@ -68,9 +73,10 @@ static cgent_config_t defaults(void) {
     cfg.model         = strdup("deepseek-chat");
     cfg.api_key       = NULL;
     cfg.base_url      = strdup("https://api.deepseek.com");
-    cfg.temperature   = 0.7;
-    cfg.max_tokens    = 4096;
-    cfg.stream        = true;
+    cfg.temperature    = 0.7;
+    cfg.max_tokens     = 4096;
+    cfg.context_length = 1000000;
+    cfg.stream         = true;
     cfg.agent_dir     = strdup("agents/cgent/");
     cfg.system_prompt = NULL;
     cfg.verbose       = false;
@@ -150,6 +156,9 @@ static void apply_settings_file(cgent_config_t *cfg) {
 
             v = json_object_get(val, "stream");
             if (v && json_is_bool(v)) m->stream = json_bool_value(v);
+
+            v = json_object_get(val, "context_length");
+            if (v && json_is_number(v)) m->context_length = (int)json_number_value(v);
         }
     }
 
@@ -219,9 +228,10 @@ static void resolve_active_model(cgent_config_t *cfg) {
 
     free(cfg->provider);  cfg->provider  = strdup(m->provider);
     free(cfg->model);     cfg->model     = strdup(m->name);
-    cfg->temperature = m->temperature;
-    cfg->max_tokens  = m->max_tokens;
-    cfg->stream      = m->stream;
+    cfg->temperature    = m->temperature;
+    cfg->max_tokens     = m->max_tokens;
+    cfg->context_length = m->context_length;
+    cfg->stream         = m->stream;
 
     /* api_key: keep CLI override if set, else use model's */
     if (!cfg->api_key) {

@@ -337,6 +337,7 @@ int main(int argc, char **argv) {
                     printf("  /clear        — Clear conversation history\n");
                     printf("  /tools        — List available tools\n");
                     printf("  /model [name] — List models or switch to <name>\n");
+                    printf("  /context      — Show context usage breakdown\n");
                     printf("  /skills       — List loaded skills\n");
                     if (cfg->skills && cfg->skills->count > 0) {
                         printf("\nSkill commands:\n");
@@ -357,6 +358,53 @@ int main(int argc, char **argv) {
                     printf("Available tools (%d):\n", agent->n_tools);
                     for (int i = 0; i < agent->n_tools; i++)
                         printf("  - %s: %s\n", agent->tools[i].name, agent->tools[i].description);
+                } else if (strcmp(line, "/context") == 0) {
+                    /* Token estimation: ~4 chars per token for English */
+                    int sys_tokens  = agent->system_prompt
+                                      ? (int)strlen(agent->system_prompt) / 4 : 0;
+                    int tool_tokens = 0;
+                    for (int i = 0; i < agent->n_tools; i++) {
+                        tool_tokens += (int)(strlen(agent->tools[i].name)
+                                     + strlen(agent->tools[i].description)
+                                     + strlen(agent->tools[i].parameters_schema)) / 4;
+                    }
+                    int msg_tokens  = 0;
+                    for (int i = 0; i < agent->n_messages; i++) {
+                        if (agent->messages[i].content)
+                            msg_tokens += (int)strlen(agent->messages[i].content) / 4;
+                        for (int j = 0; j < agent->messages[i].n_tool_calls; j++) {
+                            msg_tokens += (int)(strlen(agent->messages[i].tool_calls[j].name)
+                                        + strlen(agent->messages[i].tool_calls[j].arguments)) / 4;
+                        }
+                        for (int j = 0; j < agent->messages[i].n_tool_results; j++) {
+                            if (agent->messages[i].tool_results[j].content)
+                                msg_tokens += (int)strlen(agent->messages[i].tool_results[j].content) / 4;
+                        }
+                    }
+                    int skill_tokens = 0;
+                    if (cfg->skills) {
+                        for (int i = 0; i < cfg->skills->count; i++) {
+                            if (cfg->skills->skills[i].instruction)
+                                skill_tokens += (int)strlen(cfg->skills->skills[i].instruction) / 4;
+                        }
+                    }
+                    int total = sys_tokens + tool_tokens + msg_tokens + skill_tokens;
+                    int max_ctx = cfg->context_length;
+
+                    printf("Context Usage (%s, max %d tokens)\n", cfg->model, max_ctx);
+                    printf("  System prompt: %8d tokens (%4.1f%%)\n",
+                           sys_tokens, max_ctx > 0 ? 100.0*sys_tokens/max_ctx : 0);
+                    printf("  Tools:         %8d tokens (%4.1f%%)\n",
+                           tool_tokens, max_ctx > 0 ? 100.0*tool_tokens/max_ctx : 0);
+                    printf("  Skills:        %8d tokens (%4.1f%%)\n",
+                           skill_tokens, max_ctx > 0 ? 100.0*skill_tokens/max_ctx : 0);
+                    printf("  Messages:      %8d tokens (%4.1f%%)\n",
+                           msg_tokens, max_ctx > 0 ? 100.0*msg_tokens/max_ctx : 0);
+                    printf("  ─────────────────────────────\n");
+                    printf("  Total:         %8d tokens (%4.1f%%)\n",
+                           total, max_ctx > 0 ? 100.0*total/max_ctx : 0);
+                    printf("  Free:          %8d tokens (%4.1f%%)\n",
+                           max_ctx - total, max_ctx > 0 ? 100.0*(max_ctx-total)/max_ctx : 0);
                 } else if (strcmp(line, "/skills") == 0) {
                     if (cfg->skills && cfg->skills->count > 0) {
                         printf("Loaded skills (%d):\n", cfg->skills->count);

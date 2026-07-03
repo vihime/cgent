@@ -34,7 +34,8 @@ typedef struct {
     char *api_key;
     char *base_url;
     double temperature;
-    int max_tokens;
+    int max_tokens;         /* Max output tokens */
+    int context_length;     /* Max context window size */
     bool stream;
 } model_entry_t;
 
@@ -55,6 +56,7 @@ typedef struct {
     char *base_url;
     double temperature;
     int max_tokens;
+    int context_length;
     bool stream;
 
     /* Agent settings */
