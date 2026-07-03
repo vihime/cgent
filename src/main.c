@@ -272,6 +272,22 @@ int main(int argc, char **argv) {
         if (session) {
             printf("Resumed session: %s (%d messages)\n",
                    session->uuid, session->message_count);
+            /* Show messages */
+            for (int i = 0; i < session->message_count; i++) {
+                message_t *m = &session->messages[i];
+                const char *role = "?";
+                switch (m->role) {
+                case MSG_ROLE_SYSTEM:    role = "system"; break;
+                case MSG_ROLE_USER:      role = "user  "; break;
+                case MSG_ROLE_ASSISTANT:  role = "assist"; break;
+                case MSG_ROLE_TOOL:      role = "tool  "; break;
+                }
+                const char *preview = m->content ? m->content : "";
+                size_t plen = strlen(preview);
+                if (plen > 80) plen = 80;
+                printf("  [%d] %s: %.*s%s\n", i, role, (int)plen, preview,
+                       strlen(preview) > 80 ? "..." : "");
+            }
             /* Restore messages into agent */
             for (int i = 0; i < session->message_count; i++)
                 agent_add_message(agent, &session->messages[i]);
