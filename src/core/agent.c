@@ -14,6 +14,8 @@
 #include "network.h"
 #include "tools.h"
 
+#include <unistd.h>
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -229,6 +231,8 @@ static message_t *agent_parse_response_body(api_provider_t *api,
                                 /* Emit this chunk immediately for streaming effect */
                                 if (on_token) {
                                     on_token(delta->content, token_ctx);
+                                    /* Small delay for visible streaming effect */
+                                    usleep(15000); /* 15ms */
                                 }
                             }
                             /* Accumulate tool calls — merge by index */

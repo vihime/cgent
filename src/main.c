@@ -76,7 +76,7 @@ static char *tab_complete(const char *input) {
 
     /* Built-in commands */
     static const char *builtins[] = {
-        "/quit", "/exit", "/help", "/clear", "/tools", "/agents", "/skills", "/model", "/context", NULL
+        "/quit", "/exit", "/help", "/clear", "/tools", "/agents", "/skills", "/model", "/context", "/compact", NULL
     };
 
     /* Find matches: any builtin or skill that starts with our input */
@@ -350,6 +350,7 @@ int main(int argc, char **argv) {
                     printf("  /model [name] — List models or switch to <name>\n");
                     printf("  /agents       — List installed agents\n");
                     printf("  /context      — Show context usage breakdown\n");
+                    printf("  /compact      — Compress conversation history\n");
                     printf("  /skills       — List loaded skills\n");
                     if (cfg->skills && cfg->skills->count > 0) {
                         printf("\nSkill commands:\n");
@@ -438,6 +439,223 @@ int main(int argc, char **argv) {
                            total, max_ctx > 0 ? 100.0*total/max_ctx : 0);
                     printf("  Free:          %8d tokens (%4.1f%%)\n",
                            max_ctx - total, max_ctx > 0 ? 100.0*(max_ctx-total)/max_ctx : 0);
+                } else if (strcmp(line, "/compact") == 0) {
+                    if (agent->n_messages == 0) {
+                        printf("Nothing to compact — conversation is empty.\n");
+                    } else {
+                        /* Count tokens before compaction (same heuristic as /context) */
+                        int before_tokens = 0;
+                        for (int i = 0; i < agent->n_messages; i++) {
+                            if (agent->messages[i].content)
+                                before_tokens += (int)strlen(agent->messages[i].content) / 4;
+                            for (int j = 0; j < agent->messages[i].n_tool_calls; j++) {
+                                before_tokens += (int)(strlen(agent->messages[i].tool_calls[j].name)
+                                            + strlen(agent->messages[i].tool_calls[j].arguments)) / 4;
+                            }
+                            for (int j = 0; j < agent->messages[i].n_tool_results; j++) {
+                                if (agent->messages[i].tool_results[j].content)
+                                    before_tokens += (int)strlen(agent->messages[i].tool_results[j].content) / 4;
+                            }
+                        }
+
+                        printf("Compacting conversation (%d messages, ~%d tokens)...\n",
+                               agent->n_messages, before_tokens);
+
+                        /* ── Build conversation transcript ──────────────── */
+                        size_t buf_sz = 64 * 1024;
+                        size_t buf_len = 0;
+                        char *transcript = malloc(buf_sz);
+                        if (!transcript) {
+                            printf("Error: Failed to allocate memory for compaction.\n");
+                            free(line);
+                            continue;
+                        }
+                        transcript[0] = '\0';
+
+                        for (int i = 0; i < agent->n_messages; i++) {
+                            message_t *m = &agent->messages[i];
+                            const char *role_str = "?";
+                            switch (m->role) {
+                                case MSG_ROLE_USER:      role_str = "USER"; break;
+                                case MSG_ROLE_ASSISTANT: role_str = "ASSISTANT"; break;
+                                case MSG_ROLE_TOOL:      role_str = "TOOL"; break;
+                                default: break;
+                            }
+
+                            /* Format message header + content */
+                            char msg_buf[8192];
+                            if (m->content && m->content[0]) {
+                                snprintf(msg_buf, sizeof(msg_buf), "[%s]: %s\n", role_str, m->content);
+                            } else {
+                                snprintf(msg_buf, sizeof(msg_buf), "[%s]: (no text)\n", role_str);
+                            }
+
+                            /* Tool calls */
+                            char tc_buf[4096];
+                            tc_buf[0] = '\0';
+                            if (m->n_tool_calls > 0) {
+                                int off = 0;
+                                off += snprintf(tc_buf + off, sizeof(tc_buf) - off,
+                                                "  Tool calls:\n");
+                                for (int j = 0; j < m->n_tool_calls; j++) {
+                                    const char *args = m->tool_calls[j].arguments
+                                                       ? m->tool_calls[j].arguments : "{}";
+                                    size_t alen = strlen(args);
+                                    int show = (int)(alen > 500 ? 500 : alen);
+                                    off += snprintf(tc_buf + off, sizeof(tc_buf) - off,
+                                                    "    - %s: %.*s%s\n",
+                                                    m->tool_calls[j].name,
+                                                    show, args,
+                                                    alen > 500 ? "...(truncated)" : "");
+                                    if (off >= (int)sizeof(tc_buf) - 1) break;
+                                }
+                            }
+
+                            /* Tool results */
+                            char tr_buf[4096];
+                            tr_buf[0] = '\0';
+                            if (m->n_tool_results > 0) {
+                                int off = 0;
+                                off += snprintf(tr_buf + off, sizeof(tr_buf) - off,
+                                                "  Tool results:\n");
+                                for (int j = 0; j < m->n_tool_results; j++) {
+                                    const char *content = m->tool_results[j].content
+                                                          ? m->tool_results[j].content : "";
+                                    size_t clen = strlen(content);
+                                    int show = (int)(clen > 2000 ? 2000 : clen);
+                                    off += snprintf(tr_buf + off, sizeof(tr_buf) - off,
+                                                    "    [%s]: %.*s%s\n",
+                                                    m->tool_results[j].is_error ? "ERROR" : "OK",
+                                                    show, content,
+                                                    clen > 2000 ? "...(truncated)" : "");
+                                    if (off >= (int)sizeof(tr_buf) - 1) break;
+                                }
+                            }
+
+                            /* Grow transcript buffer if needed */
+                            size_t needed = strlen(msg_buf) + strlen(tc_buf)
+                                            + strlen(tr_buf) + 2;
+                            while (buf_len + needed + 1 > buf_sz) {
+                                buf_sz *= 2;
+                                char *grown = realloc(transcript, buf_sz);
+                                if (!grown) {
+                                    printf("Error: Failed to grow transcript buffer.\n");
+                                    free(transcript);
+                                    free(line);
+                                    goto compact_done;
+                                }
+                                transcript = grown;
+                            }
+                            strcpy(transcript + buf_len, msg_buf);
+                            buf_len += strlen(msg_buf);
+                            if (tc_buf[0]) {
+                                strcpy(transcript + buf_len, tc_buf);
+                                buf_len += strlen(tc_buf);
+                            }
+                            if (tr_buf[0]) {
+                                strcpy(transcript + buf_len, tr_buf);
+                                buf_len += strlen(tr_buf);
+                            }
+                            transcript[buf_len++] = '\n';
+                            transcript[buf_len] = '\0';
+                        }
+
+                        /* ── Build compaction prompt ─────────────────── */
+                        static const char *compact_instruction =
+                            "You are compressing the conversation history of an AI coding "
+                            "assistant session. Your task is to produce a structured summary "
+                            "that preserves ONLY the information needed to continue work "
+                            "effectively:\n\n"
+                            "REQUIRED - must preserve:\n"
+                            "- The user's final/current task goal\n"
+                            "- Important technical decisions made (with rationale)\n"
+                            "- Files modified and key code changes (what was changed and why)\n"
+                            "- Project architecture information (language, framework, structure)\n\n"
+                            "DISCARD:\n"
+                            "- Trial-and-error attempts and failed approaches\n"
+                            "- Reverted/modified changes that no longer apply\n"
+                            "- Verbose tool outputs, logs, debug output\n"
+                            "- Repetitive or redundant exchanges\n"
+                            "- Irrelevant tangents\n\n"
+                            "Format the summary as a compact but complete technical document. "
+                            "Keep it concise. Write in prose, not bullet points.\n\n"
+                            "Here is the conversation to compress:\n\n"
+                            "---BEGIN CONVERSATION---\n";
+
+                        size_t prompt_sz = strlen(compact_instruction) + buf_len + 64;
+                        char *prompt = malloc(prompt_sz);
+                        if (!prompt) {
+                            printf("Error: Failed to allocate compaction prompt.\n");
+                            free(transcript);
+                            free(line);
+                            continue;
+                        }
+                        snprintf(prompt, prompt_sz, "%s%s\n---END CONVERSATION---\n",
+                                 compact_instruction, transcript);
+                        free(transcript);
+
+                        int saved_count = agent->n_messages;
+
+                        /* Clear conversation — agent_chat will populate fresh */
+                        for (int i = 0; i < agent->n_messages; i++)
+                            message_clear(&agent->messages[i]);
+                        agent->n_messages = 0;
+
+                        /* Send compaction request (non-streaming for reliability) */
+                        printf("Sending compaction request to %s...\n", cfg->model);
+                        message_t *resp = agent_chat(agent, prompt);
+                        free(prompt);
+
+                        /* Extract compressed content */
+                        char *compressed = NULL;
+                        if (resp && resp->content && resp->content[0]) {
+                            compressed = strdup(resp->content);
+                        }
+                        message_free(resp);
+
+                        /* Clear again — don't keep compaction request/response */
+                        for (int i = 0; i < agent->n_messages; i++)
+                            message_clear(&agent->messages[i]);
+                        agent->n_messages = 0;
+
+                        if (compressed) {
+                            /* Add compressed summary as user context message */
+                            size_t ctx_sz = strlen(compressed) + 128;
+                            char *ctx_msg = malloc(ctx_sz);
+                            snprintf(ctx_msg, ctx_sz,
+                                     "[Compressed conversation summary — %d messages condensed]\n\n%s",
+                                     saved_count, compressed);
+                            free(compressed);
+
+                            message_t ctx_message = {
+                                .role = MSG_ROLE_USER,
+                                .content = ctx_msg,
+                                .n_tool_calls = 0,
+                                .n_tool_results = 0,
+                            };
+                            agent_add_message(agent, &ctx_message);
+                            free(ctx_msg);
+
+                            /* Count tokens after */
+                            int after_tokens = 0;
+                            for (int i = 0; i < agent->n_messages; i++) {
+                                if (agent->messages[i].content)
+                                    after_tokens += (int)strlen(agent->messages[i].content) / 4;
+                            }
+
+                            printf("Compaction complete: %d messages → 1 summary\n",
+                                   saved_count);
+                            printf("  Before: ~%d tokens → After: ~%d tokens (%.0f%% reduction)\n",
+                                   before_tokens, after_tokens,
+                                   before_tokens > 0
+                                       ? 100.0 * (before_tokens - after_tokens) / before_tokens
+                                       : 0.0);
+                        } else {
+                            printf("Error: Compaction returned no content. "
+                                   "Conversation has been cleared.\n");
+                        }
+                    }
+compact_done:;
                 } else if (strcmp(line, "/skills") == 0) {
                     if (cfg->skills && cfg->skills->count > 0) {
                         printf("Loaded skills (%d):\n", cfg->skills->count);
