@@ -526,48 +526,73 @@ message_t *agent_chat(agent_t *agent, const char *user_input) {
 
 /* ── Streaming chat ─────────────────────────────────────────────── */
 
-/* Accumulator state for streaming */
+/* Streaming receive context — passed to HTTP data callback */
 typedef struct {
-    message_t *accumulated;
+    sse_parser_t *parser;
+    message_t *accum;
     api_provider_t *api;
-    char *text_buffer;
+    void (*on_token)(const char *, void *);
+    void *token_ctx;
+    char *text_buf;
     size_t text_len;
-    size_t text_cap;
-} stream_ctx_t;
+    /* Tool call merger */
+    int ptc_index[16];
+    char *ptc_id[16];
+    char *ptc_name[16];
+    char *ptc_args[16];
+    int n_ptc;
+} stream_rx_t;
 
-__attribute__((unused))
-static bool sse_callback(const sse_event_t *event, void *userdata) {
-    stream_ctx_t *ctx = (stream_ctx_t *)userdata;
-    if (!event || !event->data) return true;
-
-    /* Check for [DONE] signal */
-    if (strcmp(event->data, "[DONE]") == 0) return true;
-
-    /* Parse the chunk using the provider */
-    message_t *delta = ctx->api->parse_chunk(event->data);
+static bool stream_sse_event(const sse_event_t *ev, void *p) {
+    stream_rx_t *rx = (stream_rx_t *)p;
+    if (!ev || !ev->data) return true;
+    if (strcmp(ev->data, "[DONE]") == 0) return true;
+    message_t *delta = rx->api->parse_chunk(ev->data);
     if (!delta) return true;
-
-    /* Accumulate text content */
     if (delta->content) {
-        size_t dlen = strlen(delta->content);
-        while (ctx->text_len + dlen + 1 > ctx->text_cap) {
-            ctx->text_cap = ctx->text_cap ? ctx->text_cap * 2 : 4096;
-            ctx->text_buffer = realloc(ctx->text_buffer, ctx->text_cap);
-        }
-        memcpy(ctx->text_buffer + ctx->text_len, delta->content, dlen);
-        ctx->text_len += dlen;
-        ctx->text_buffer[ctx->text_len] = '\0';
+        size_t dl = strlen(delta->content);
+        rx->text_buf = realloc(rx->text_buf, rx->text_len + dl + 1);
+        memcpy(rx->text_buf + rx->text_len, delta->content, dl);
+        rx->text_len += dl;
+        rx->text_buf[rx->text_len] = '\0';
+        if (rx->on_token) rx->on_token(delta->content, rx->token_ctx);
     }
-
-    /* Accumulate tool calls */
     for (int i = 0; i < delta->n_tool_calls; i++) {
-        tool_call_t *tc = &delta->tool_calls[i];
-        message_add_tool_call(ctx->accumulated,
-            tc->id, tc->name, tc->arguments);
+        int idx = delta->n_tool_calls > 1 ? i : 0;
+        bool found = false;
+        for (int j = 0; j < rx->n_ptc; j++) {
+            if (rx->ptc_index[j] == idx) {
+                found = true;
+                if (delta->tool_calls[i].id && delta->tool_calls[i].id[0]) {
+                    free(rx->ptc_id[j]); rx->ptc_id[j] = strdup(delta->tool_calls[i].id); }
+                if (delta->tool_calls[i].name && delta->tool_calls[i].name[0]) {
+                    free(rx->ptc_name[j]); rx->ptc_name[j] = strdup(delta->tool_calls[i].name); }
+                if (delta->tool_calls[i].arguments && delta->tool_calls[i].arguments[0]) {
+                    size_t ol = rx->ptc_args[j] ? strlen(rx->ptc_args[j]) : 0;
+                    size_t al = strlen(delta->tool_calls[i].arguments);
+                    rx->ptc_args[j] = realloc(rx->ptc_args[j], ol + al + 1);
+                    memcpy(rx->ptc_args[j] + ol, delta->tool_calls[i].arguments, al);
+                    rx->ptc_args[j][ol + al] = '\0';
+                }
+                break;
+            }
+        }
+        if (!found && rx->n_ptc < 16) {
+            int j = rx->n_ptc++;
+            rx->ptc_index[j] = idx;
+            rx->ptc_id[j] = delta->tool_calls[i].id ? strdup(delta->tool_calls[i].id) : NULL;
+            rx->ptc_name[j] = delta->tool_calls[i].name ? strdup(delta->tool_calls[i].name) : NULL;
+            rx->ptc_args[j] = delta->tool_calls[i].arguments ? strdup(delta->tool_calls[i].arguments) : NULL;
+        }
     }
-
     message_free(delta);
     return true;
+}
+
+static void stream_rx_data(const char *data, size_t len, void *ctx) {
+    stream_rx_t *rx = (stream_rx_t *)ctx;
+    sse_parser_feed(rx->parser, data, len, stream_sse_event, rx);
+    (void)len;
 }
 
 message_t *agent_chat_stream(agent_t *agent, const char *user_input,
@@ -575,12 +600,8 @@ message_t *agent_chat_stream(agent_t *agent, const char *user_input,
                              void *ctx) {
     if (!agent || !user_input) return NULL;
 
-    /* Add user message to conversation */
     message_t user_msg = {
-        .role = MSG_ROLE_USER,
-        .content = strdup(user_input),
-        .n_tool_calls = 0,
-        .n_tool_results = 0,
+        .role = MSG_ROLE_USER, .content = strdup(user_input),
     };
     agent_add_message(agent, &user_msg);
 
@@ -588,100 +609,89 @@ message_t *agent_chat_stream(agent_t *agent, const char *user_input,
     int max_rounds = 10;
 
     while (max_rounds-- > 0) {
-        /* Note: full SSE streaming not yet implemented.
-         * We use non-streaming HTTP and deliver the entire response
-         * at once via the on_token callback. */
-
         char *body = agent->api->build_request(agent);
-
-        if (!body) {
-            fprintf(stderr, "[agent] Failed to build request\n");
-            break;
-        }
-
-        if (agent->verbose) {
-            fprintf(stderr, "[agent] Request body: %s\n", body);
-        }
+        if (!body) { fprintf(stderr, "[agent] Failed to build request\n"); break; }
+        if (agent->verbose) fprintf(stderr, "[agent] Request body: %s\n", body);
 
         char *url = agent_endpoint_url(agent);
         char *auth_val = agent_auth_header(agent);
 
-        /* Build headers */
-        char *headers[4];
-        int n_headers = 0;
-        headers[n_headers] = malloc(strlen(agent->api->auth_header) +
-                                     strlen(auth_val) + 4);
+        char *headers[4]; int n_headers = 0;
+        headers[n_headers] = malloc(strlen(agent->api->auth_header) + strlen(auth_val) + 4);
         sprintf(headers[n_headers++], "%s: %s", agent->api->auth_header, auth_val);
         headers[n_headers++] = strdup("Content-Type: application/json");
-        if (agent->api->type == PROVIDER_ANTHROPIC) {
+        if (agent->api->type == PROVIDER_ANTHROPIC)
             headers[n_headers++] = strdup("anthropic-version: 2023-06-01");
-        }
 
         http_request_t req = {
-            .method       = "POST",
-            .url          = url,
-            .headers      = headers,
-            .header_count = n_headers,
-            .body         = body,
-            .body_length  = strlen(body),
-            .timeout_ms   = 120000,
+            .method = "POST", .url = url, .headers = headers,
+            .header_count = n_headers, .body = body, .body_length = strlen(body),
+            .timeout_ms = 120000,
         };
 
-        /* We need to read the streaming response manually for SSE parsing.
-         * The current http_client doesn't have streaming support built in,
-         * so we use the non-streaming endpoint as a fallback. */
         message_t *assistant_msg = NULL;
 
-        if (agent->verbose) {
-            fprintf(stderr, "[agent] POST (stream) %s\n", url);
+        if (agent->verbose) fprintf(stderr, "[agent] POST (stream) %s\n", url);
+
+        /* Use real streaming HTTP if streaming is enabled */
+        if (agent->provider.stream) {
+            stream_rx_t rx = {0};
+            rx.parser = sse_parser_create();
+            rx.accum = message_create(MSG_ROLE_ASSISTANT, NULL);
+            rx.api = agent->api;
+            rx.on_token = on_token;
+            rx.token_ctx = ctx;
+
+            http_response_t *resp = http_request_stream(&req, stream_rx_data, &rx);
+            sse_parser_flush(rx.parser, NULL, NULL);
+
+            if (rx.text_buf) rx.accum->content = rx.text_buf;
+            /* Flush merged tool calls */
+            for (int i = 0; i < rx.n_ptc; i++) {
+                if (rx.ptc_id[i] && rx.ptc_id[i][0])
+                    message_add_tool_call(rx.accum, rx.ptc_id[i],
+                        rx.ptc_name[i] ? rx.ptc_name[i] : "",
+                        rx.ptc_args[i] ? rx.ptc_args[i] : "{}");
+                free(rx.ptc_id[i]); free(rx.ptc_name[i]); free(rx.ptc_args[i]);
+            }
+            sse_parser_free(rx.parser);
+            assistant_msg = rx.accum;
+
+            if (!resp || resp->status_code < 200 || resp->status_code >= 300) {
+                if (resp) {
+                    fprintf(stderr, "[agent] API error (HTTP %d)\n", resp->status_code);
+                    http_response_free(resp);
+                } else {
+                    fprintf(stderr, "[agent] HTTP request failed\n");
+                }
+                message_free(assistant_msg); assistant_msg = NULL;
+                free(body); free(url); free(auth_val);
+                for (int i = 0; i < n_headers; i++) free(headers[i]);
+                break;
+            }
+            http_response_free(resp);
+        } else {
+            /* Fallback: non-streaming HTTP */
+            http_response_t *resp = http_request(&req);
+            if (!resp || resp->status_code < 200 || resp->status_code >= 300) {
+                if (resp) {
+                    fprintf(stderr, "[agent] API error (HTTP %d): %s\n",
+                            resp->status_code, resp->body ? resp->body : "");
+                    http_response_free(resp);
+                } else fprintf(stderr, "[agent] HTTP request failed\n");
+                free(body); free(url); free(auth_val);
+                for (int i = 0; i < n_headers; i++) free(headers[i]);
+                break;
+            }
+            assistant_msg = agent_parse_response_body(
+                agent->api, resp->body, agent->verbose, on_token, ctx);
+            http_response_free(resp);
         }
 
-        /* For now, use non-streaming HTTP + parse the whole body.
-         * Full SSE streaming over raw sockets will be added in Phase 2+. */
-        http_response_t *resp = http_request(&req);
-
-        free(body);
-        free(url);
-        free(auth_val);
+        free(body); free(url); free(auth_val);
         for (int i = 0; i < n_headers; i++) free(headers[i]);
 
-        if (!resp || resp->status_code < 200 || resp->status_code >= 300) {
-            if (resp) {
-                fprintf(stderr, "[agent] API error (HTTP %d): %s\n",
-                        resp->status_code,
-                        resp->body ? resp->body : "(no body)");
-                if (resp->body && agent->verbose) {
-                    fprintf(stderr, "[agent] Raw body: %s\n", resp->body);
-                }
-                http_response_free(resp);
-            } else {
-                fprintf(stderr, "[agent] HTTP request failed\n");
-            }
-            break;
-        }
-
-        if (agent->verbose && resp->body) {
-            fprintf(stderr, "[agent] Raw response (%zu bytes): %s\n",
-                    resp->body_length, resp->body);
-        }
-
-        /* Save a copy of the body for error logging */
-        char *saved_body = resp->body ? strdup(resp->body) : NULL;
-        assistant_msg = agent_parse_response_body(
-            agent->api, resp->body, agent->verbose, on_token, ctx);
-        http_response_free(resp);
-
-        if (!assistant_msg) {
-            fprintf(stderr, "[agent] Failed to parse response\n");
-            if (saved_body) {
-                fprintf(stderr, "[agent] --- BEGIN RAW RESPONSE ---\n");
-                fprintf(stderr, "%s\n", saved_body);
-                fprintf(stderr, "[agent] --- END RAW RESPONSE ---\n");
-            }
-            free(saved_body);
-            break;
-        }
-        free(saved_body);
+        if (!assistant_msg) break;
 
         /* Handle tool calls */
         if (assistant_msg->n_tool_calls > 0) {

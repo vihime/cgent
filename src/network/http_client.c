@@ -414,6 +414,118 @@ http_response_t *http_request(const http_request_t *req) {
 
 /* ── Response lifecycle ─────────────────────────────────────────── */
 
+/* ── Streaming HTTP request ────────────────────────────────────── */
+
+http_response_t *http_request_stream(const http_request_t *req,
+                                      http_data_cb on_data, void *ctx) {
+    if (!req || !req->url) return NULL;
+    if (http_mock_is_enabled()) {
+        /* Mock: return full response, then call on_data once */
+        http_response_t *resp = http_mock_request(req);
+        if (resp && resp->body && on_data) {
+            on_data(resp->body, resp->body_length, ctx);
+        }
+        return resp;
+    }
+    if (!ssl_ctx && http_init() != 0) return NULL;
+
+    parsed_url_t *url = url_parse(req->url);
+    if (!url) return NULL;
+
+    bool is_https = (strcmp(url->scheme, "https") == 0);
+    http_response_t *resp = calloc(1, sizeof(http_response_t));
+
+    if (is_https) {
+        tls_conn_t *conn = tls_connect(url->host, url->port);
+        if (!conn) { url_free(url); free(resp); return NULL; }
+
+        size_t req_len;
+        char *req_buf = build_http_request(req, &req_len);
+        if (!req_buf || tls_send_all(conn, req_buf, req_len) != 0) {
+            free(req_buf); tls_close(conn); url_free(url); free(resp);
+            return NULL;
+        }
+        free(req_buf);
+
+        /* Read status line */
+        char *status_line = tls_read_line(conn);
+        if (!status_line) { tls_close(conn); url_free(url); free(resp); return NULL; }
+        char *sp = strchr(status_line, ' ');
+        resp->status_code = sp ? atoi(sp + 1) : 0;
+        free(status_line);
+
+        /* Read headers */
+        int hdr_cap = 16;
+        resp->headers = malloc(hdr_cap * sizeof(char *));
+        resp->header_count = 0;
+        bool chunked = false;
+        size_t content_length = 0;
+
+        while (1) {
+            char *hdr = tls_read_line(conn);
+            if (!hdr || *hdr == '\0') { free(hdr); break; }
+            if (resp->header_count >= hdr_cap) {
+                hdr_cap *= 2;
+                resp->headers = realloc(resp->headers, hdr_cap * sizeof(char *));
+            }
+            resp->headers[resp->header_count++] = hdr;
+            if (strncasecmp(hdr, "transfer-encoding:", 18) == 0 &&
+                strstr(hdr + 18, "chunked")) chunked = true;
+            if (strncasecmp(hdr, "content-length:", 15) == 0)
+                content_length = atol(hdr + 15);
+        }
+
+        /* Read body in chunks and call callback */
+        if (chunked) {
+            while (1) {
+                char *chunk_line = tls_read_line(conn);
+                if (!chunk_line) break;
+                long chunk_size = strtol(chunk_line, NULL, 16);
+                free(chunk_line);
+                if (chunk_size <= 0) break;
+                char *chunk_data = tls_read_n(conn, chunk_size);
+                if (chunk_data) {
+                    if (on_data) on_data(chunk_data, chunk_size, ctx);
+                    free(chunk_data);
+                }
+                tls_read_line(conn); /* discard trailing \r\n */
+                /* Also discard trailer headers */
+            }
+            /* Read trailer */
+            while (1) {
+                char *t = tls_read_line(conn);
+                if (!t || *t == '\0') { free(t); break; }
+                free(t);
+            }
+        } else if (content_length > 0) {
+            size_t remaining = content_length;
+            while (remaining > 0) {
+                size_t to_read = remaining < 4096 ? remaining : 4096;
+                char *chunk = tls_read_n(conn, to_read);
+                if (!chunk) break;
+                if (on_data) on_data(chunk, to_read, ctx);
+                remaining -= to_read;
+                free(chunk);
+            }
+        } else {
+            /* Read until close */
+            while (1) {
+                char chunk[4096];
+                int n = SSL_read(conn->ssl, chunk, sizeof(chunk));
+                if (n <= 0) break;
+                if (on_data) on_data(chunk, n, ctx);
+            }
+        }
+
+        tls_close(conn);
+    }
+
+    url_free(url);
+    return resp;
+}
+
+/* ── Response lifecycle ────────────────────────────────────────── */
+
 void http_response_free(http_response_t *resp) {
     if (!resp) return;
     for (int i = 0; i < resp->header_count; i++) free(resp->headers[i]);

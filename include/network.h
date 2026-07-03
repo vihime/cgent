@@ -33,6 +33,14 @@ void http_cleanup(void);
 
 /* Synchronous HTTP request */
 http_response_t *http_request(const http_request_t *req);
+
+/* Streaming HTTP request with SSE callback.
+ * Reads response body incrementally and calls on_event for each
+ * complete SSE event as data arrives. Returns the response headers.
+ * on_data is called for each raw data chunk received. */
+typedef void (*http_data_cb)(const char *data, size_t len, void *ctx);
+http_response_t *http_request_stream(const http_request_t *req,
+                                      http_data_cb on_data, void *ctx);
 void             http_response_free(http_response_t *resp);
 void             http_request_free(http_request_t *req);
 
