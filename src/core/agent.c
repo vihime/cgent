@@ -598,6 +598,10 @@ message_t *agent_chat_stream(agent_t *agent, const char *user_input,
             break;
         }
 
+        if (agent->verbose) {
+            fprintf(stderr, "[agent] Request body: %s\n", body);
+        }
+
         char *url = agent_endpoint_url(agent);
         char *auth_val = agent_auth_header(agent);
 
