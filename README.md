@@ -2,7 +2,7 @@
 
 A multi-provider AI agent written entirely in C11. Zero external library dependencies — only system OpenSSL and libc are required.
 
-Supports Anthropic, OpenAI, and DeepSeek APIs with tools, subagents, streaming, and an interactive REPL.
+Supports Anthropic, OpenAI, and DeepSeek APIs with tools, subagents, real-time SSE streaming, session persistence, and an interactive REPL.
 
 ## Quick Start
 
@@ -264,14 +264,16 @@ cgent/
 User input → CLI/REPL → Agent Core → Protocol → HTTP/TLS → API
                                       ↑                      │
                                       │   Tool System ←──────┘
-                                      │   (read_file, bash, etc.)
+                                      │   (read_file, edit, etc.)
                                       ↓
-                                  Subagent (fork+exec, IPC)
+                         SSE streaming (real-time tokens)
+                         Subagent (fork+exec, IPC)
+                         Session (auto-save to ~/.cgent/sessions/)
 ```
 
 ### Zero Dependencies
 
-The HTTP client is implemented directly over raw OpenSSL sockets — no libcurl, no libuv. The JSON parser is cJSON embedded as a single `.c`/`.h` pair (MIT license). Everything else is built from scratch in C11.
+The HTTP client is implemented directly over raw OpenSSL sockets — no libcurl for API calls. Real-time SSE streaming with incremental chunked reads. The JSON parser is cJSON embedded as a single `.c`/`.h` pair (MIT license). Everything else is built from scratch in C11.
 
 Binary size: **95K** default (`-Os -s`), **79K** with `make small` (LTO + gc-sections).
 
