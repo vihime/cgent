@@ -535,6 +535,7 @@ typedef struct {
     void *token_ctx;
     char *text_buf;
     size_t text_len;
+    bool verbose;
     /* Tool call merger */
     int ptc_index[16];
     char *ptc_id[16];
@@ -591,8 +592,12 @@ static bool stream_sse_event(const sse_event_t *ev, void *p) {
 
 static void stream_rx_data(const char *data, size_t len, void *ctx) {
     stream_rx_t *rx = (stream_rx_t *)ctx;
+    if (rx->verbose) {
+        fprintf(stderr, "[stream] recv %zu bytes: %.*s%s\n",
+                len, (int)(len < 200 ? len : 200), data,
+                len > 200 ? "..." : "");
+    }
     sse_parser_feed(rx->parser, data, len, stream_sse_event, rx);
-    (void)len;
 }
 
 message_t *agent_chat_stream(agent_t *agent, const char *user_input,
@@ -641,6 +646,7 @@ message_t *agent_chat_stream(agent_t *agent, const char *user_input,
             rx.api = agent->api;
             rx.on_token = on_token;
             rx.token_ctx = ctx;
+            rx.verbose = agent->verbose;
 
             http_response_t *resp = http_request_stream(&req, stream_rx_data, &rx);
             sse_parser_flush(rx.parser, NULL, NULL);
