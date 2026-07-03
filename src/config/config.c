@@ -165,6 +165,7 @@ static void apply_settings_file(cgent_config_t *cfg) {
             if (thinking && json_is_object(thinking)) {
                 v = json_object_get(thinking, "type");
                 if (v && json_is_string(v)) {
+                    m->thinking_configured = true;
                     m->thinking_enabled = (strcmp(json_string_value(v), "enabled") == 0);
                 }
             }
@@ -257,7 +258,8 @@ static void resolve_active_model(cgent_config_t *cfg) {
     cfg->max_tokens     = m->max_tokens;
     cfg->context_length   = m->context_length;
     cfg->stream           = m->stream;
-    cfg->thinking_enabled = m->thinking_enabled;
+    cfg->thinking_enabled   = m->thinking_enabled;
+    cfg->thinking_configured = m->thinking_configured;
     free(cfg->reasoning_effort);
     cfg->reasoning_effort = m->reasoning_effort ? strdup(m->reasoning_effort) : NULL;
 

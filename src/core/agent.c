@@ -33,8 +33,9 @@ agent_t *agent_create(provider_config_t *config, struct api_provider *api) {
         agent->provider.temperature      = config->temperature;
         agent->provider.max_tokens       = config->max_tokens;
         agent->provider.stream           = config->stream;
-        agent->provider.thinking_enabled = config->thinking_enabled;
-        agent->provider.reasoning_effort = config->reasoning_effort
+        agent->provider.thinking_enabled   = config->thinking_enabled;
+        agent->provider.thinking_configured = config->thinking_configured;
+        agent->provider.reasoning_effort   = config->reasoning_effort
                                            ? strdup(config->reasoning_effort) : NULL;
     }
     agent->api = api;

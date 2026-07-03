@@ -256,8 +256,9 @@ int main(int argc, char **argv) {
         .temperature      = cfg->temperature,
         .max_tokens       = cfg->max_tokens,
         .stream           = cfg->stream,
-        .thinking_enabled = cfg->thinking_enabled,
-        .reasoning_effort = cfg->reasoning_effort,
+        .thinking_enabled   = cfg->thinking_enabled,
+        .thinking_configured = cfg->thinking_configured,
+        .reasoning_effort   = cfg->reasoning_effort,
     };
 
     /* Create agent */
@@ -756,7 +757,8 @@ compact_done:;
                             agent->provider.temperature = cfg->temperature;
                             agent->provider.max_tokens = cfg->max_tokens;
                             agent->provider.stream = cfg->stream;
-                            agent->provider.thinking_enabled = cfg->thinking_enabled;
+                            agent->provider.thinking_enabled   = cfg->thinking_enabled;
+                            agent->provider.thinking_configured = cfg->thinking_configured;
                             free(agent->provider.reasoning_effort);
                             agent->provider.reasoning_effort = cfg->reasoning_effort
                                 ? strdup(cfg->reasoning_effort) : NULL;

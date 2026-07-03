@@ -66,6 +66,7 @@ typedef struct {
     int max_tokens;
     bool stream;
     bool thinking_enabled;
+    bool thinking_configured;
     char *reasoning_effort;
 } provider_config_t;
 
