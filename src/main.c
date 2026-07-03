@@ -75,7 +75,7 @@ static char *tab_complete(const char *input) {
 
     /* Built-in commands */
     static const char *builtins[] = {
-        "/quit", "/exit", "/help", "/clear", "/tools", "/skills", "/model", NULL
+        "/quit", "/exit", "/help", "/clear", "/tools", "/skills", "/model", "/context", NULL
     };
 
     /* Find matches: any builtin or skill that starts with our input */
