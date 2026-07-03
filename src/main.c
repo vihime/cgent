@@ -814,6 +814,9 @@ compact_done:;
     }
 
     /* Cleanup */
+    if (session && session->uuid && session->uuid[0]) {
+        printf("\nResume: cgent --resume %s\n", session->uuid);
+    }
     agent_free(agent);
     session_free(session);
     config_free(cfg);
