@@ -324,6 +324,16 @@ int main(int argc, char **argv) {
 
             /* Handle slash commands — set handled=true to skip agent */
             bool handled = false;
+            /* !cmd — execute bash command directly */
+            if (line[0] == '!' && line[1]) {
+                printf("%s\n", line + 1);
+                int rc;
+                char *out = os_exec_capture(line + 1, &rc);
+                if (out) { printf("%s", out); free(out); }
+                if (rc != 0) printf("(exit: %d)\n", rc);
+                free(line);
+                continue;
+            }
             if (line[0] == '/') {
                 handled = true;
 
