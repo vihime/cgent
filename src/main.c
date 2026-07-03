@@ -12,6 +12,7 @@
 #include <string.h>
 #include <getopt.h>
 #include <locale.h>
+#include <dirent.h>
 
 static void print_version(void) {
     printf("cgent v" CGENT_VERSION " [%s/%s] (gcc " __VERSION__ ")\n",
@@ -75,7 +76,7 @@ static char *tab_complete(const char *input) {
 
     /* Built-in commands */
     static const char *builtins[] = {
-        "/quit", "/exit", "/help", "/clear", "/tools", "/skills", "/model", "/context", NULL
+        "/quit", "/exit", "/help", "/clear", "/tools", "/agents", "/skills", "/model", "/context", NULL
     };
 
     /* Find matches: any builtin or skill that starts with our input */
@@ -337,6 +338,7 @@ int main(int argc, char **argv) {
                     printf("  /clear        — Clear conversation history\n");
                     printf("  /tools        — List available tools\n");
                     printf("  /model [name] — List models or switch to <name>\n");
+                    printf("  /agents       — List installed agents\n");
                     printf("  /context      — Show context usage breakdown\n");
                     printf("  /skills       — List loaded skills\n");
                     if (cfg->skills && cfg->skills->count > 0) {
@@ -358,6 +360,27 @@ int main(int argc, char **argv) {
                     printf("Available tools (%d):\n", agent->n_tools);
                     for (int i = 0; i < agent->n_tools; i++)
                         printf("  - %s: %s\n", agent->tools[i].name, agent->tools[i].description);
+                } else if (strcmp(line, "/agents") == 0) {
+                    printf("Installed agents:\n");
+                    DIR *d = opendir("agents");
+                    if (d) {
+                        struct dirent *e;
+                        int count = 0;
+                        while ((e = readdir(d))) {
+                            if (e->d_name[0] == '.') continue;
+                            char *ag_path = os_path_join("agents", e->d_name);
+                            char *md_path = os_path_join(ag_path, "AGENTS.md");
+                            int is_agent = os_path_exists(md_path);
+                            const char *mark = (cfg->agent_dir && strstr(cfg->agent_dir, e->d_name)) ? " *" : "  ";
+                            printf("%s%s%s\n", mark, e->d_name, is_agent ? "" : " (no AGENTS.md)");
+                            if (is_agent) count++;
+                            free(md_path);
+                            free(ag_path);
+                        }
+                        closedir(d);
+                    } else {
+                        printf("  (no agents directory)\n");
+                    }
                 } else if (strcmp(line, "/context") == 0) {
                     /* Token estimation: ~4 chars per token for English */
                     int sys_tokens  = agent->system_prompt
