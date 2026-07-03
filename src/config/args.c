@@ -17,6 +17,7 @@ cli_args_t cli_parse(int argc, char **argv) {
         .query        = NULL,
         .agent_dir    = NULL,
         .config_path  = NULL,
+        .resume_uuid  = NULL,
         .temperature  = 0.7,
         .max_tokens   = 4096,
         .stream       = true,
@@ -36,6 +37,7 @@ cli_args_t cli_parse(int argc, char **argv) {
         {"max-tokens",  required_argument, 0, 'M'},
         {"no-stream",   no_argument,       0, 'n'},
         {"config",      required_argument, 0, 'c'},
+        {"resume",      required_argument, 0, 'r'},
         {"verbose",     no_argument,       0, 'v'},
         {"help",        no_argument,       0, 'h'},
         {"version",     no_argument,       0, 'V'},
@@ -43,7 +45,7 @@ cli_args_t cli_parse(int argc, char **argv) {
     };
 
     int opt;
-    while ((opt = getopt_long(argc, argv, "p:m:k:u:q:a:t:M:nc:vhV",
+    while ((opt = getopt_long(argc, argv, "p:m:k:u:q:a:t:M:nc:r:vhV",
                               long_opts, NULL)) != -1) {
         switch (opt) {
         case 'p': args.provider   = optarg; break;
@@ -56,6 +58,7 @@ cli_args_t cli_parse(int argc, char **argv) {
         case 'M': args.max_tokens  = atoi(optarg); break;
         case 'n': args.stream      = false; break;
         case 'c': args.config_path = optarg; break;
+        case 'r': args.resume_uuid = optarg; break;
         case 'v': args.verbose     = true; break;
         case 'h': args.help        = true; break;
         case 'V': args.version     = true; break;

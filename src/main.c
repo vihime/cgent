@@ -6,6 +6,7 @@
  */
 #include "cgent.h"
 #include "subagent.h"
+#include "session.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -34,6 +35,7 @@ static void print_usage(const char *prog) {
     printf("  -M, --max-tokens <n>     Max output tokens (default: 4096)\n");
     printf("  -n, --no-stream          Disable streaming output\n");
     printf("  -c, --config <path>      Config file path\n");
+    printf("  -r, --resume <uuid>      Resume session by UUID\n");
     printf("  -v, --verbose            Verbose/debug output\n");
     printf("  -h, --help               Show this help\n");
     printf("  -V, --version            Show version\n");
@@ -263,6 +265,34 @@ int main(int argc, char **argv) {
     }
     agent->verbose = cfg->verbose;
 
+    /* ── Session management ───────────────────────────────────── */
+    session_t *session = NULL;
+    if (args.resume_uuid && args.resume_uuid[0]) {
+        session = session_load(args.resume_uuid);
+        if (session) {
+            printf("Resumed session: %s (%d messages)\n",
+                   session->uuid, session->message_count);
+            /* Restore messages into agent */
+            for (int i = 0; i < session->message_count; i++)
+                agent_add_message(agent, &session->messages[i]);
+        } else {
+            fprintf(stderr, "Session not found: %s\n", args.resume_uuid);
+        }
+    }
+    if (!session) {
+        session = calloc(1, sizeof(session_t));
+        session->uuid = session_generate_uuid();
+        session->message_cap = 64;
+        session->messages = calloc(session->message_cap, sizeof(message_t));
+        printf("Session: %s\n", session->uuid);
+    }
+    if (session && !session->provider) {
+        session->provider = strdup(cfg->provider);
+        session->model = strdup(cfg->model);
+        if (cfg->system_prompt)
+            session->system_prompt = strdup(cfg->system_prompt);
+    }
+
     /* Set system prompt — loaded from AGENTS.md in agent directory */
     if (cfg->system_prompt && cfg->system_prompt[0]) {
         agent_set_system_prompt(agent, cfg->system_prompt);
@@ -293,6 +323,11 @@ int main(int argc, char **argv) {
 
     if (args.query) {
         /* ── Single-shot mode ──────────────────────────────────── */
+        /* Add user input to session */
+        message_t qmsg = { .role = MSG_ROLE_USER, .content = strdup(args.query) };
+        session_add_message(session, &qmsg);
+        free(qmsg.content);
+
         if (cfg->stream) {
             agent_chat_stream(agent, args.query, on_token, NULL);
             printf("\n");
@@ -301,8 +336,12 @@ int main(int argc, char **argv) {
             if (resp && resp->content) {
                 printf("%s\n", resp->content);
             }
+            /* Add response to session */
+            if (resp) session_add_message(session, resp);
             message_free(resp);
         }
+        /* Save session */
+        session_save(session, cfg);
     } else {
         /* ── Interactive REPL mode ─────────────────────────────── */
         print_version();
@@ -748,6 +787,11 @@ compact_done:;
 
             /* Send to agent */
             if (!handled) {
+                /* Add user input to session */
+                message_t umsg = { .role = MSG_ROLE_USER, .content = strdup(line) };
+                session_add_message(session, &umsg);
+                free(umsg.content);
+
                 if (cfg->stream) {
                     agent_chat_stream(agent, line, on_token, NULL);
                     printf("\n");
@@ -757,9 +801,13 @@ compact_done:;
                         if (resp->content) printf("%s\n", resp->content);
                         if (resp->n_tool_calls > 0)
                             printf("[Used %d tool(s)]\n", resp->n_tool_calls);
+                        session_add_message(session, resp);
                         message_free(resp);
                     }
                 }
+                /* Save session */
+                if (session->uuid)
+                    session_save(session, cfg);
             }
             free(line);
         }
@@ -767,6 +815,7 @@ compact_done:;
 
     /* Cleanup */
     agent_free(agent);
+    session_free(session);
     config_free(cfg);
     http_cleanup();
 

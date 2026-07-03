@@ -115,6 +115,7 @@ typedef struct {
     char *query;
     char *agent_dir;
     char *config_path;
+    char *resume_uuid;          /* --resume: restore session */
     double temperature;
     int max_tokens;
     bool stream;
