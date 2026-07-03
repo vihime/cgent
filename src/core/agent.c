@@ -27,12 +27,15 @@ agent_t *agent_create(provider_config_t *config, struct api_provider *api) {
     if (!agent) return NULL;
 
     if (config) {
-        agent->provider.api_key     = config->api_key ? strdup(config->api_key) : NULL;
-        agent->provider.base_url    = config->base_url ? strdup(config->base_url) : NULL;
-        agent->provider.model       = config->model ? strdup(config->model) : NULL;
-        agent->provider.temperature = config->temperature;
-        agent->provider.max_tokens  = config->max_tokens;
-        agent->provider.stream      = config->stream;
+        agent->provider.api_key          = config->api_key ? strdup(config->api_key) : NULL;
+        agent->provider.base_url         = config->base_url ? strdup(config->base_url) : NULL;
+        agent->provider.model            = config->model ? strdup(config->model) : NULL;
+        agent->provider.temperature      = config->temperature;
+        agent->provider.max_tokens       = config->max_tokens;
+        agent->provider.stream           = config->stream;
+        agent->provider.thinking_enabled = config->thinking_enabled;
+        agent->provider.reasoning_effort = config->reasoning_effort
+                                           ? strdup(config->reasoning_effort) : NULL;
     }
     agent->api = api;
 
@@ -52,6 +55,7 @@ void agent_free(agent_t *agent) {
     free(agent->provider.api_key);
     free(agent->provider.base_url);
     free(agent->provider.model);
+    free(agent->provider.reasoning_effort);
     free(agent->system_prompt);
     for (int i = 0; i < agent->n_messages; i++)
         message_clear(&agent->messages[i]);

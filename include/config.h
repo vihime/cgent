@@ -37,6 +37,8 @@ typedef struct {
     int max_tokens;         /* Max output tokens */
     int context_length;     /* Max context window size */
     bool stream;
+    bool thinking_enabled;  /* Deep thinking / chain-of-thought */
+    char *reasoning_effort; /* "low", "medium", "high", "max" or NULL */
 } model_entry_t;
 
 /* ── Runtime configuration ──────────────────────────────────────── */
@@ -58,6 +60,8 @@ typedef struct {
     int max_tokens;
     int context_length;
     bool stream;
+    bool thinking_enabled;
+    char *reasoning_effort;
 
     /* Agent settings */
     char *agent_dir;

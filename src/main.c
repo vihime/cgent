@@ -243,12 +243,14 @@ int main(int argc, char **argv) {
 
     /* Build provider config */
     provider_config_t pcfg = {
-        .api_key     = cfg->api_key,
-        .base_url    = cfg->base_url ? cfg->base_url : strdup(api->default_base_url),
-        .model       = cfg->model ? cfg->model : strdup(api->default_model),
-        .temperature = cfg->temperature,
-        .max_tokens  = cfg->max_tokens,
-        .stream      = cfg->stream,
+        .api_key          = cfg->api_key,
+        .base_url         = cfg->base_url ? cfg->base_url : strdup(api->default_base_url),
+        .model            = cfg->model ? cfg->model : strdup(api->default_model),
+        .temperature      = cfg->temperature,
+        .max_tokens       = cfg->max_tokens,
+        .stream           = cfg->stream,
+        .thinking_enabled = cfg->thinking_enabled,
+        .reasoning_effort = cfg->reasoning_effort,
     };
 
     /* Create agent */
@@ -694,6 +696,10 @@ compact_done:;
                             agent->provider.temperature = cfg->temperature;
                             agent->provider.max_tokens = cfg->max_tokens;
                             agent->provider.stream = cfg->stream;
+                            agent->provider.thinking_enabled = cfg->thinking_enabled;
+                            free(agent->provider.reasoning_effort);
+                            agent->provider.reasoning_effort = cfg->reasoning_effort
+                                ? strdup(cfg->reasoning_effort) : NULL;
                             printf("Model changed to: %s (provider: %s)\n",
                                    cfg->model, cfg->provider);
                         } else {

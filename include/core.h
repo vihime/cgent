@@ -65,6 +65,8 @@ typedef struct {
     double temperature;
     int max_tokens;
     bool stream;
+    bool thinking_enabled;
+    char *reasoning_effort;
 } provider_config_t;
 
 /* ── Agent ──────────────────────────────────────────────────────── */

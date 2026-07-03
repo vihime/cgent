@@ -139,6 +139,17 @@ static char *deepseek_build_request(const agent_t *agent) {
     json_object_set(root, "max_tokens",
         json_number(agent->provider.max_tokens));
 
+    /* Deep thinking / reasoning */
+    if (agent->provider.thinking_enabled) {
+        json_value_t *thinking = json_object();
+        json_object_set(thinking, "type", json_string("enabled"));
+        json_object_set(root, "thinking", thinking);
+    }
+    if (agent->provider.reasoning_effort && agent->provider.reasoning_effort[0]) {
+        json_object_set(root, "reasoning_effort",
+            json_string(agent->provider.reasoning_effort));
+    }
+
     char *result = json_stringify(root);
     json_free(root);
     return result;

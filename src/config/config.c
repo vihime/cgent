@@ -159,6 +159,31 @@ static void apply_settings_file(cgent_config_t *cfg) {
 
             v = json_object_get(val, "context_length");
             if (v && json_is_number(v)) m->context_length = (int)json_number_value(v);
+
+            /* ── thinking: {"type": "enabled"/"disabled"} ── */
+            json_value_t *thinking = json_object_get(val, "thinking");
+            if (thinking && json_is_object(thinking)) {
+                v = json_object_get(thinking, "type");
+                if (v && json_is_string(v)) {
+                    m->thinking_enabled = (strcmp(json_string_value(v), "enabled") == 0);
+                }
+            }
+
+            /* ── reasoning_effort: "low"/"medium"/"high"/"max" ── */
+            v = json_object_get(val, "reasoning_effort");
+            if (v && json_is_string(v)) {
+                free(m->reasoning_effort);
+                m->reasoning_effort = strdup(json_string_value(v));
+            }
+
+            /* ── output_config: {"effort": "high"/"max"} (alt format) ── */
+            json_value_t *oc = json_object_get(val, "output_config");
+            if (oc && json_is_object(oc)) {
+                v = json_object_get(oc, "effort");
+                if (v && json_is_string(v) && !m->reasoning_effort) {
+                    m->reasoning_effort = strdup(json_string_value(v));
+                }
+            }
         }
     }
 
@@ -230,8 +255,11 @@ static void resolve_active_model(cgent_config_t *cfg) {
     free(cfg->model);     cfg->model     = strdup(m->name);
     cfg->temperature    = m->temperature;
     cfg->max_tokens     = m->max_tokens;
-    cfg->context_length = m->context_length;
-    cfg->stream         = m->stream;
+    cfg->context_length   = m->context_length;
+    cfg->stream           = m->stream;
+    cfg->thinking_enabled = m->thinking_enabled;
+    free(cfg->reasoning_effort);
+    cfg->reasoning_effort = m->reasoning_effort ? strdup(m->reasoning_effort) : NULL;
 
     /* api_key: keep CLI override if set, else use model's */
     if (!cfg->api_key) {
@@ -316,11 +344,13 @@ void config_free(cgent_config_t *cfg) {
         free(cfg->models[i].provider);
         free(cfg->models[i].api_key);
         free(cfg->models[i].base_url);
+        free(cfg->models[i].reasoning_effort);
     }
     free(cfg->provider);
     free(cfg->model);
     free(cfg->api_key);
     free(cfg->base_url);
+    free(cfg->reasoning_effort);
     free(cfg->agent_dir);
     free(cfg->system_prompt);
     free(cfg->config_path);
