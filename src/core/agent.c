@@ -593,7 +593,7 @@ static bool stream_sse_event(const sse_event_t *ev, void *p) {
 static void stream_rx_data(const char *data, size_t len, void *ctx) {
     stream_rx_t *rx = (stream_rx_t *)ctx;
     if (rx->verbose) {
-        fprintf(stderr, "[stream] recv %zu bytes: %.*s%s\n",
+        fprintf(stderr, "\n[stream] recv %zu bytes: %.*s%s\n",
                 len, (int)(len < 200 ? len : 200), data,
                 len > 200 ? "..." : "");
     }
