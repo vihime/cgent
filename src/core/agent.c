@@ -599,8 +599,8 @@ static void stream_rx_data(const char *data, size_t len, void *ctx) {
     stream_rx_t *rx = (stream_rx_t *)ctx;
     if (rx->verbose) {
         fprintf(stderr, "\n[stream] recv %zu bytes: %.*s%s\n",
-                len, (int)(len < 200 ? len : 200), data,
-                len > 200 ? "..." : "");
+                len, (int)(len < 800 ? len : 800), data,
+                len > 800 ? "..." : "");
     }
     sse_parser_feed(rx->parser, data, len, stream_sse_event, rx);
 }
