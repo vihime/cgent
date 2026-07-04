@@ -13,6 +13,7 @@ PROTO_SRCS  = src/protocol/provider.c src/protocol/deepseek.c \
 TOOL_SRCS   = src/tools/tool_registry.c src/tools/tool_executor.c \
               src/tools/builtin_tools.c
 SKILL_SRCS  = src/skills/skills.c
+MAILBOX_SRCS = src/mailbox/mailbox.c
 SESSION_SRCS = src/session/session.c
 SUBAGENT_SRCS = src/subagent/subagent.c
 CONFIG_SRCS = src/config/args.c src/config/agent_md.c src/config/config.c
@@ -23,7 +24,7 @@ THIRD_SRCS  = third_party/cJSON/cJSON.c
 
 ALL_SRCS    = src/main.c \
               $(CORE_SRCS) $(NET_SRCS) $(PROTO_SRCS) $(TOOL_SRCS) \
-              $(SKILL_SRCS) $(SESSION_SRCS) $(SUBAGENT_SRCS) \
+              $(SKILL_SRCS) $(MAILBOX_SRCS) $(SESSION_SRCS) $(SUBAGENT_SRCS) \
               $(CONFIG_SRCS) $(JSON_SRCS) $(PLAT_SRCS) \
               $(THIRD_SRCS)
 

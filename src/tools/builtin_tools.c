@@ -5,6 +5,7 @@
 #include "json.h"
 #include "platform.h"
 #include "subagent.h"
+#include "mailbox.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -558,6 +559,104 @@ static char *tool_web_search(const char *name, const char *args_json, char **err
     return out_str;
 }
 
+/* ── send_message (mailbox) ───────────────────────────────────── */
+
+static char *tool_send_message(const char *name, const char *args_json, char **error) {
+    (void)name;
+    json_value_t *args = json_parse(args_json);
+    if (!args) { if (error) *error = strdup("Invalid JSON arguments"); return NULL; }
+
+    json_value_t *recip = json_object_get(args, "recipient");
+    json_value_t *subj  = json_object_get(args, "subject");
+    json_value_t *body  = json_object_get(args, "body");
+    json_value_t *send  = json_object_get(args, "sender");
+
+    const char *recipient = recip ? json_string_value(recip) : "all";
+    const char *subject   = subj  ? json_string_value(subj)  : "";
+    const char *b         = body  ? json_string_value(body)  : "";
+    const char *sender    = send  ? json_string_value(send)  : "agent";
+
+    if (!b[0]) {
+        if (error) *error = strdup("Missing 'body' argument");
+        json_free(args); return NULL;
+    }
+
+    char *msg_id = mailbox_send(sender, recipient, subject, b);
+    json_free(args);
+
+    if (!msg_id) {
+        if (error) *error = strdup("Failed to send message");
+        return NULL;
+    }
+
+    json_value_t *out = json_object();
+    json_object_set(out, "message_id", json_string(msg_id));
+    json_object_set(out, "sent", json_bool(true));
+
+    char *out_str = json_stringify(out);
+    json_free(out);
+    free(msg_id);
+    return out_str;
+}
+
+/* ── check_mailbox ─────────────────────────────────────────────── */
+
+static char *tool_check_mailbox(const char *name, const char *args_json, char **error) {
+    (void)name; (void)error;
+    json_value_t *args = json_parse(args_json);
+    const char *recipient = "agent";
+
+    if (args) {
+        json_value_t *r = json_object_get(args, "recipient");
+        if (r && json_is_string(r)) recipient = json_string_value(r);
+        json_free(args);
+    }
+
+    json_value_t *out = json_object();
+    json_value_t *msgs_arr = json_array();
+
+    mailbox_msg_t *msgs[64];
+    int n = mailbox_check(recipient, msgs, 64);
+
+    for (int i = 0; i < n; i++) {
+        json_value_t *m = json_object();
+        json_object_set(m, "id", json_string(msgs[i]->id));
+        json_object_set(m, "sender", json_string(msgs[i]->sender ? msgs[i]->sender : ""));
+        json_object_set(m, "subject", json_string(msgs[i]->subject ? msgs[i]->subject : ""));
+        json_object_set(m, "body", json_string(msgs[i]->body ? msgs[i]->body : ""));
+        json_array_append(msgs_arr, m);
+        mailbox_msg_free(msgs[i]);
+    }
+
+    json_object_set(out, "messages", msgs_arr);
+    json_object_set(out, "count", json_number(n));
+
+    char *out_str = json_stringify(out);
+    json_free(out);
+    return out_str;
+}
+
+/* ── clear_mailbox ──────────────────────────────────────────────── */
+
+static char *tool_clear_mailbox(const char *name, const char *args_json, char **error) {
+    (void)name; (void)error;
+    json_value_t *args = json_parse(args_json);
+    const char *recipient = "agent";
+    if (args) {
+        json_value_t *r = json_object_get(args, "recipient");
+        if (r && json_is_string(r)) recipient = json_string_value(r);
+        json_free(args);
+    }
+
+    int n = mailbox_clear(recipient);
+
+    json_value_t *out = json_object();
+    json_object_set(out, "cleared", json_number(n));
+    char *out_str = json_stringify(out);
+    json_free(out);
+    return out_str;
+}
+
 /* ── Registration ───────────────────────────────────────────────── */
 
 void builtin_tools_register(void) {
@@ -682,6 +781,41 @@ void builtin_tools_register(void) {
             "\"query\":{\"type\":\"string\",\"description\":\"The search query\"}},"
             "\"required\":[\"query\"]}",
             tool_web_search);
+        tool_registry_add(t);
+    }
+
+    /* send_message */
+    {
+        tool_t *t = tool_create("send_message",
+            "Send a message to the mailbox. Messages can be read later "
+            "by the recipient using check_mailbox.",
+            "{\"type\":\"object\",\"properties\":{"
+            "\"recipient\":{\"type\":\"string\",\"description\":\"Recipient name (default: all)\"},"
+            "\"subject\":{\"type\":\"string\",\"description\":\"Message subject\"},"
+            "\"body\":{\"type\":\"string\",\"description\":\"Message body\"},"
+            "\"sender\":{\"type\":\"string\",\"description\":\"Sender name (default: agent)\"}},"
+            "\"required\":[\"body\"]}",
+            tool_send_message);
+        tool_registry_add(t);
+    }
+
+    /* check_mailbox */
+    {
+        tool_t *t = tool_create("check_mailbox",
+            "Check the mailbox for unread messages. Returns list of messages.",
+            "{\"type\":\"object\",\"properties\":{"
+            "\"recipient\":{\"type\":\"string\",\"description\":\"Filter by recipient (default: agent)\"}}}",
+            tool_check_mailbox);
+        tool_registry_add(t);
+    }
+
+    /* clear_mailbox */
+    {
+        tool_t *t = tool_create("clear_mailbox",
+            "Clear (delete) all messages for a recipient from the mailbox.",
+            "{\"type\":\"object\",\"properties\":{"
+            "\"recipient\":{\"type\":\"string\",\"description\":\"Recipient to clear (default: agent)\"}}}",
+            tool_clear_mailbox);
         tool_registry_add(t);
     }
 }
