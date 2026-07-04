@@ -79,6 +79,18 @@ clean:
 install: $(TARGET)
 	install -d $(DESTDIR)$(PREFIX)/bin
 	install -m 755 $(TARGET) $(DESTDIR)$(PREFIX)/bin/
+	@echo ""
+	@echo "cgent installed to $(DESTDIR)$(PREFIX)/bin/cgent"
+	@echo ""
+	@if echo "$(PREFIX)" | grep -q "$(HOME)/.local"; then \
+		echo "Make sure ~/.local/bin is in your PATH:"; \
+		echo "  export PATH=\"\$$HOME/.local/bin:\$$PATH\""; \
+		echo ""; \
+		echo "Add this to your shell config for persistence:"; \
+		echo "  echo 'export PATH=\"\$$HOME/.local/bin:\$$PATH\"' >> ~/.bashrc  # bash"; \
+		echo "  echo 'export PATH=\"\$$HOME/.local/bin:\$$PATH\"' >> ~/.zshrc   # zsh"; \
+		echo ""; \
+	fi
 
 # Build module object files only (for incremental dev)
 modules: $(filter-out src/main.o,$(ALL_OBJS))
