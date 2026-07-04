@@ -7,18 +7,17 @@ Supports Anthropic, OpenAI, and DeepSeek APIs with tools, subagents, real-time S
 ## Quick Start
 
 ```bash
-# Build
-make
+# Build & install
+make && make install
 
-# Configure API key (choose one method)
+# Configure API key
 export CGENT_API_KEY="sk-your-key"            # env var
-# or edit ~/.cgent/settings.json → deepseek-chat.api_key
 
 # Run
-./cgent -q "What is 2+2?"                     # single query
-./cgent -q "Read /etc/hostname"               # with tool use
-./cgent                                        # interactive REPL
-./cgent --resume <uuid>                        # resume a session
+cgent -q "What is 2+2?"                        # single query
+cgent -q "Read /etc/hostname"                  # with tool use
+cgent                                           # interactive REPL
+cgent --resume <uuid>                           # resume a session
 ```
 
 ## Requirements
@@ -219,6 +218,9 @@ Examples:
 | `grep` | Search for text patterns in files |
 | `web_fetch` | Fetch content from a URL |
 | `web_search` | Perform a web search |
+| `send_message` | Send a message to the mailbox |
+| `check_mailbox` | Check for unread mailbox messages |
+| `clear_mailbox` | Clear mailbox messages |
 | `spawn_subagent` | Spawn a child cgent process for parallel work |
 
 ## Architecture
@@ -282,10 +284,10 @@ Binary size: **95K** default (`-Os -s`), **79K** with `make small` (LTO + gc-sec
 ```bash
 make              # Build cgent (95K, -Os -s)
 make small        # Smallest binary (79K, LTO + gc-sections)
+make install      # Install to ~/.local/bin (default)
 make static       # Static binary (needs libzstd-static)
 make test         # Run all unit tests (25 tests)
 make clean        # Remove build artifacts
-make install      # Install to $PREFIX/bin
 ```
 
 ## Test Suite
