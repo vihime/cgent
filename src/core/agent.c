@@ -484,6 +484,19 @@ message_t *agent_chat(agent_t *agent, const char *user_input) {
                 char *error = NULL;
                 char *result = tool_execute(tc->name, tc->arguments, 30000, &error);
 
+                if (agent->verbose) {
+                    if (result) {
+                        size_t rlen = strlen(result);
+                        fprintf(stderr, "[agent] Tool result (%s): %.*s%s\n",
+                                tc->name,
+                                (int)(rlen < 400 ? rlen : 400), result,
+                                rlen > 400 ? "..." : "");
+                    } else {
+                        fprintf(stderr, "[agent] Tool error (%s): %s\n",
+                                tc->name, error ? error : "unknown");
+                    }
+                }
+
                 /* Build tool result message */
                 message_t tool_msg = {
                     .role = MSG_ROLE_TOOL,
@@ -724,6 +737,19 @@ message_t *agent_chat_stream(agent_t *agent, const char *user_input,
 
                 char *error = NULL;
                 char *result = tool_execute(tc->name, tc->arguments, 30000, &error);
+
+                if (agent->verbose) {
+                    if (result) {
+                        size_t rlen = strlen(result);
+                        fprintf(stderr, "[agent] Tool result (%s): %.*s%s\n",
+                                tc->name,
+                                (int)(rlen < 400 ? rlen : 400), result,
+                                rlen > 400 ? "..." : "");
+                    } else {
+                        fprintf(stderr, "[agent] Tool error (%s): %s\n",
+                                tc->name, error ? error : "unknown");
+                    }
+                }
 
                 message_t tool_msg = {
                     .role = MSG_ROLE_TOOL,
