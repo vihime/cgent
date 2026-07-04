@@ -352,7 +352,7 @@ int main(int argc, char **argv) {
 
         if (cfg->stream) {
             agent_chat_stream(agent, args.query, on_token, NULL);
-            printf("\n");
+            printf("\n"); fflush(stdout);
         } else {
             message_t *resp = agent_chat(agent, args.query);
             if (resp && resp->content) {
@@ -817,7 +817,7 @@ compact_done:;
 
                 if (cfg->stream) {
                     agent_chat_stream(agent, line, on_token, NULL);
-                    printf("\n");
+                    printf("\n"); fflush(stdout);
                 } else {
                     message_t *resp = agent_chat(agent, line);
                     if (resp) {
