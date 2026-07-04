@@ -105,6 +105,11 @@ static char *agent_endpoint_url(agent_t *agent) {
     const char *base = agent->provider.base_url;
     if (!base) base = agent->api->default_base_url;
 
+    /* If base_url already contains the full endpoint, use it directly */
+    if (strstr(base, "/chat/completions") || strstr(base, "/messages")) {
+        return strdup(base);
+    }
+
     /* DeepSeek and OpenAI use chat completions endpoint */
     if (agent->api->type == PROVIDER_ANTHROPIC) {
         size_t len = strlen(base) + 16;
