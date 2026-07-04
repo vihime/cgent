@@ -100,6 +100,9 @@ char *config_resolve_agent_prompt(const char *agent_dir);
 /* Get/create ~/.cgent directory */
 char *config_cgent_dir(void);
 
+/* Save the current model back to settings.json */
+void config_save_current_model(const cgent_config_t *cfg);
+
 /* Switch active model by name. Returns 0 on success, -1 if not found.
  * Updates all resolved fields (provider, api_key, base_url, etc.). */
 int  config_switch_model(cgent_config_t *cfg, const char *model_name);

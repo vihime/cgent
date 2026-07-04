@@ -764,6 +764,7 @@ compact_done:;
                                 ? strdup(cfg->reasoning_effort) : NULL;
                             printf("Model changed to: %s (provider: %s)\n",
                                    cfg->model, cfg->provider);
+                            config_save_current_model(cfg);
                         } else {
                             printf("Unknown model: %s. Available models:\n", model_name);
                             for (int i = 0; i < cfg->model_count; i++)

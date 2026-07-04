@@ -106,9 +106,12 @@ static void apply_settings_file(cgent_config_t *cfg) {
     free(data);
     if (!root) { free(path); return; }
 
-    /* default_model */
+    /* current_model takes priority over default_model */
+    json_value_t *curm = json_object_get(root, "current_model");
+    const char *current_name = curm && json_is_string(curm) ? json_string_value(curm) : NULL;
     json_value_t *defm = json_object_get(root, "default_model");
     const char *default_name = defm && json_is_string(defm) ? json_string_value(defm) : NULL;
+    const char *active_name = current_name ? current_name : default_name;
 
     /* models section */
     json_value_t *models_obj = json_object_get(root, "models");
@@ -197,10 +200,10 @@ static void apply_settings_file(cgent_config_t *cfg) {
         add_default_models(cfg);
     }
 
-    /* Set active model from default_model or first */
-    if (default_name) {
+    /* Set active model from current_model or default_model */
+    if (active_name) {
         for (int i = 0; i < cfg->model_count; i++) {
-            if (strcmp(cfg->models[i].name, default_name) == 0) {
+            if (strcmp(cfg->models[i].name, active_name) == 0) {
                 cfg->active_model = i;
                 break;
             }
@@ -293,6 +296,45 @@ int config_switch_model(cgent_config_t *cfg, const char *model_name) {
 
     resolve_active_model(cfg);
     return 0;
+}
+
+/* ── Save current model ─────────────────────────────────────────── */
+
+void config_save_current_model(const cgent_config_t *cfg) {
+    if (!cfg || !cfg->model) return;
+    char *path = os_path_join(cfg->cgent_dir, "settings.json");
+    if (!path || !os_path_exists(path)) { free(path); return; }
+
+    FILE *fp = fopen(path, "r");
+    if (!fp) { free(path); return; }
+    fseek(fp, 0, SEEK_END);
+    long sz = ftell(fp);
+    fseek(fp, 0, SEEK_SET);
+    if (sz <= 0 || sz > 65536) { fclose(fp); free(path); return; }
+    char *data = malloc(sz + 1);
+    size_t nread = fread(data, 1, sz, fp);
+    data[nread] = '\0';
+    fclose(fp);
+
+    json_value_t *root = json_parse(data);
+    free(data);
+    if (!root) { free(path); return; }
+
+    /* Update current_model */
+    json_value_t *cur = json_object_get(root, "current_model");
+    if (cur && json_is_string(cur)) {
+        /* Replace existing value */
+        json_object_del(root, "current_model");
+    }
+    json_object_set(root, "current_model", json_string(cfg->model));
+
+    char *json_str = json_stringify_pretty(root);
+    json_free(root);
+
+    fp = fopen(path, "w");
+    if (fp) { fputs(json_str, fp); fclose(fp); }
+    free(json_str);
+    free(path);
 }
 
 /* ── Agent prompt ────────────────────────────────────────────────── */
