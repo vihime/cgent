@@ -32,7 +32,7 @@ ALL_OBJS    = $(ALL_SRCS:.c=.o)
 ALL_DEPS    = $(ALL_SRCS:.c=.d)
 
 TARGET      = cgent
-PREFIX     ?= /usr/local
+PREFIX     ?= $(HOME)/.local
 
 # ── Targets ───────────────────────────────────────────────────────
 
@@ -113,4 +113,4 @@ help:
 	@echo "Variables:"
 	@echo "  DEBUG=1       — debug build with sanitizers"
 	@echo "  V=1           — verbose output"
-	@echo "  PREFIX=/usr   — install prefix"
+	@echo "  PREFIX=~/.local  — install prefix (default)"
