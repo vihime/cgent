@@ -782,17 +782,35 @@ compact_done:;
                         const char *params = space ? space + 1 : "";
                         while (*params == ' ') params++;
 
+                        /* Resolve skill directory from SKILL.md path */
+                        char skill_dir[1024] = "";
+                        if (sk->path) {
+                            snprintf(skill_dir, sizeof(skill_dir), "%s", sk->path);
+                            char *last_slash = strrchr(skill_dir, '/');
+                            if (last_slash) *last_slash = '\0'; /* Remove SKILL.md */
+                        }
+
                         /* Build prompt combining skill instruction with user params */
-                        size_t task_sz = strlen(sk->instruction) + strlen(params) + 512;
+                        size_t task_sz = strlen(sk->instruction) + strlen(params) + strlen(skill_dir) + 1024;
                         char *task_buf = malloc(task_sz);
                         if (params[0]) {
                             snprintf(task_buf, task_sz,
-                                     "Invoke skill '%s' with input: %s\n\n%s",
-                                     sk->name, params, sk->instruction);
+                                     "Invoke skill '%s' with input: %s\n\n"
+                                     "Skill directory: %s\n"
+                                     "Scripts directory: %s/scripts\n\n"
+                                     "%s",
+                                     sk->name, params,
+                                     skill_dir, skill_dir,
+                                     sk->instruction);
                         } else {
                             snprintf(task_buf, task_sz,
-                                     "Invoke skill '%s'.\n\n%s",
-                                     sk->name, sk->instruction);
+                                     "Invoke skill '%s'.\n\n"
+                                     "Skill directory: %s\n"
+                                     "Scripts directory: %s/scripts\n\n"
+                                     "%s",
+                                     sk->name,
+                                     skill_dir, skill_dir,
+                                     sk->instruction);
                         }
                         printf("Invoking skill: %s\n", sk->name);
                         handled = false;
