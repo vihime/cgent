@@ -9,7 +9,8 @@ CORE_SRCS   = src/core/agent.c src/core/message.c src/core/streaming.c
 NET_SRCS    = src/network/http_client.c src/network/sse_reader.c \
               src/network/http_mock.c
 PROTO_SRCS  = src/protocol/provider.c src/protocol/deepseek.c \
-              src/protocol/openai.c src/protocol/anthropic.c
+              src/protocol/openai.c src/protocol/anthropic.c \
+              src/protocol/bigmodel.c
 TOOL_SRCS   = src/tools/tool_registry.c src/tools/tool_executor.c \
               src/tools/builtin_tools.c
 SKILL_SRCS  = src/skills/skills.c

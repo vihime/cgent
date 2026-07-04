@@ -14,6 +14,7 @@ typedef enum {
     PROVIDER_DEEPSEEK,
     PROVIDER_OPENAI,
     PROVIDER_ANTHROPIC,
+    PROVIDER_BIGMODEL,
     PROVIDER_COUNT
 } provider_type_t;
 

@@ -13,11 +13,15 @@ static api_provider_t *providers[PROVIDER_COUNT] = {0};
 extern api_provider_t provider_deepseek;
 extern api_provider_t provider_openai;
 extern api_provider_t provider_anthropic;
+extern api_provider_t provider_bigmodel;
+extern void bigmodel_init(void);
 
 void provider_init(void) {
     providers[PROVIDER_DEEPSEEK]  = &provider_deepseek;
     providers[PROVIDER_OPENAI]    = &provider_openai;
     providers[PROVIDER_ANTHROPIC] = &provider_anthropic;
+    providers[PROVIDER_BIGMODEL]  = &provider_bigmodel;
+    bigmodel_init();
 }
 
 api_provider_t *provider_get(provider_type_t type) {
@@ -30,5 +34,6 @@ api_provider_t *provider_get_by_name(const char *name) {
     if (strcmp(name, "deepseek") == 0)  return providers[PROVIDER_DEEPSEEK];
     if (strcmp(name, "openai") == 0)    return providers[PROVIDER_OPENAI];
     if (strcmp(name, "anthropic") == 0) return providers[PROVIDER_ANTHROPIC];
+    if (strcmp(name, "bigmodel") == 0)  return providers[PROVIDER_BIGMODEL];
     return NULL;
 }
