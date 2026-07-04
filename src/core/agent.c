@@ -589,9 +589,17 @@ static bool stream_sse_event(const sse_event_t *ev, void *p) {
                 if (delta->tool_calls[i].arguments && delta->tool_calls[i].arguments[0]) {
                     size_t ol = rx->ptc_args[j] ? strlen(rx->ptc_args[j]) : 0;
                     size_t al = strlen(delta->tool_calls[i].arguments);
-                    rx->ptc_args[j] = realloc(rx->ptc_args[j], ol + al + 1);
-                    memcpy(rx->ptc_args[j] + ol, delta->tool_calls[i].arguments, al);
-                    rx->ptc_args[j][ol + al] = '\0';
+                    /* If existing args end with } and new chunk starts with {,
+                     * it's likely a duplicate/overlap — replace instead of append */
+                    if (ol > 0 && rx->ptc_args[j][ol-1] == '}'
+                        && delta->tool_calls[i].arguments[0] == '{') {
+                        free(rx->ptc_args[j]);
+                        rx->ptc_args[j] = strdup(delta->tool_calls[i].arguments);
+                    } else {
+                        rx->ptc_args[j] = realloc(rx->ptc_args[j], ol + al + 1);
+                        memcpy(rx->ptc_args[j] + ol, delta->tool_calls[i].arguments, al);
+                        rx->ptc_args[j][ol + al] = '\0';
+                    }
                 }
                 break;
             }
