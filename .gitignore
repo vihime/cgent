@@ -19,7 +19,6 @@ test/test-subagent
 *~
 .vscode/
 .idea/
-.claude/
 compile_commands.json
 tags
 .claude/
