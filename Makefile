@@ -32,6 +32,7 @@ ALL_OBJS    = $(ALL_SRCS:.c=.o)
 ALL_DEPS    = $(ALL_SRCS:.c=.d)
 
 TARGET      = cgent
+PREFIX     ?= /usr/local
 
 # ── Targets ───────────────────────────────────────────────────────
 
