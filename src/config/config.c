@@ -72,7 +72,7 @@ static cgent_config_t defaults(void) {
     cfg.provider      = strdup("deepseek");
     cfg.model         = strdup("deepseek-chat");
     cfg.api_key       = NULL;
-    cfg.base_url      = strdup("https://api.deepseek.com");
+    cfg.base_url      = NULL;  /* Will be set from active model */
     cfg.temperature    = 0.7;
     cfg.max_tokens     = 4096;
     cfg.context_length = 1000000;
@@ -270,10 +270,9 @@ static void resolve_active_model(cgent_config_t *cfg) {
     if (!cfg->api_key) {
         cfg->api_key = m->api_key ? strdup(m->api_key) : NULL;
     }
-    /* base_url: keep CLI override if set, else use model's */
-    if (!cfg->base_url) {
-        cfg->base_url = m->base_url ? strdup(m->base_url) : NULL;
-    }
+    /* base_url: always use model's (CLI overrides applied later via config_apply_cli) */
+    free(cfg->base_url);
+    cfg->base_url = m->base_url ? strdup(m->base_url) : NULL;
 }
 
 /* ── Model switching ────────────────────────────────────────────── */
