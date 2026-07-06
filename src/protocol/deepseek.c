@@ -6,7 +6,7 @@
  *
  * Request:
  * {
- *   "model": "deepseek-chat",
+ *   "model": "deepseek-v4-flash",
  *   "messages": [
  *     {"role": "system", "content": "..."},
  *     {"role": "user", "content": "..."}
@@ -44,7 +44,7 @@ static char *deepseek_build_request(const agent_t *agent) {
 
     /* Model */
     json_object_set(root, "model",
-        json_string(agent->provider.model ? agent->provider.model : "deepseek-chat"));
+        json_string(agent->provider.model ? agent->provider.model : "deepseek-v4-flash"));
 
     /* Messages array */
     json_value_t *msgs = json_array();
@@ -365,7 +365,7 @@ api_provider_t provider_deepseek = {
     .type              = PROVIDER_DEEPSEEK,
     .name              = "deepseek",
     .default_base_url  = "https://api.deepseek.com",
-    .default_model     = "deepseek-chat",
+    .default_model     = "deepseek-v4-flash",
     .auth_header       = "Authorization",
     .auth_prefix       = "Bearer ",
     .build_request     = deepseek_build_request,

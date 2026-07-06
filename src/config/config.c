@@ -3,9 +3,9 @@
  *
  * settings.json format:
  * {
- *   "default_model": "deepseek-chat",
+ *   "default_model": "deepseek-v4-flash",
  *   "models": {
- *     "deepseek-chat": {
+ *     "deepseek-v4-flash": {
  *       "provider": "deepseek",
  *       "api_key": "sk-xxx",
  *       "base_url": "https://api.deepseek.com",
@@ -57,8 +57,8 @@ static void add_default_model(cgent_config_t *cfg, const char *name,
 }
 
 static void add_default_models(cgent_config_t *cfg) {
-    add_default_model(cfg, "deepseek-chat",    "deepseek",  "https://api.deepseek.com");
-    add_default_model(cfg, "deepseek-reasoner","deepseek",  "https://api.deepseek.com");
+    add_default_model(cfg, "deepseek-v4-flash",   "deepseek",  "https://api.deepseek.com");
+    add_default_model(cfg, "deepseek-v4-pro[1m]", "deepseek",  "https://api.deepseek.com");
     add_default_model(cfg, "gpt-4o",           "openai",    "https://api.openai.com");
     add_default_model(cfg, "gpt-4o-mini",      "openai",    "https://api.openai.com");
     add_default_model(cfg, "claude-sonnet-4-6","anthropic", "https://api.anthropic.com");
@@ -70,7 +70,7 @@ static cgent_config_t defaults(void) {
 
     cfg.active_model  = -1;  /* Will be set after models are loaded */
     cfg.provider      = strdup("deepseek");
-    cfg.model         = strdup("deepseek-chat");
+    cfg.model         = strdup("deepseek-v4-flash");
     cfg.api_key       = NULL;
     cfg.base_url      = NULL;  /* Will be set from active model */
     cfg.temperature    = 0.7;
@@ -337,6 +337,140 @@ void config_save_current_model(const cgent_config_t *cfg) {
 }
 
 /* ── Agent prompt ────────────────────────────────────────────────── */
+
+/* ── Provider model presets ─────────────────────────────────────── */
+
+typedef struct {
+    const char *name;
+    const char *provider;
+    const char *base_url;
+    double temperature;
+    int max_tokens;
+    int context_length;
+    bool stream;
+    bool thinking_enabled;
+    const char *reasoning_effort;
+} model_preset_t;
+
+static const model_preset_t PROVIDER_PRESETS[] = {
+    /* DeepSeek models */
+    { "deepseek-v4-flash",   "deepseek", "https://api.deepseek.com",
+      0.7, 32768, 1048576, true, true,  "high" },
+    { "deepseek-v4-pro[1m]", "deepseek", "https://api.deepseek.com",
+      0.7, 32768, 1048576, true, true,  "high" },
+    /* OpenAI models */
+    { "gpt-4o",              "openai",   "https://api.openai.com",
+      0.7, 4096,  128000,  true,  false, NULL },
+    { "gpt-4o-mini",         "openai",   "https://api.openai.com",
+      0.7, 4096,  128000,  true,  false, NULL },
+    /* Anthropic models */
+    { "claude-sonnet-4-6",   "anthropic","https://api.anthropic.com",
+      0.7, 4096,  200000,  true,  false, NULL },
+    { "claude-opus-4-8",     "anthropic","https://api.anthropic.com",
+      0.7, 4096,  200000,  true,  false, NULL },
+    { NULL, NULL, NULL, 0, 0, 0, false, false, NULL },
+};
+
+/* Apply a model preset to a JSON object (for settings.json "models" section) */
+static void apply_preset_to_json(json_value_t *model_obj, const model_preset_t *p,
+                                  const char *api_key) {
+    json_object_set(model_obj, "provider", json_string(p->provider));
+    if (api_key && api_key[0])
+        json_object_set(model_obj, "api_key", json_string(api_key));
+    json_object_set(model_obj, "base_url", json_string(p->base_url));
+    json_object_set(model_obj, "temperature", json_number(p->temperature));
+    json_object_set(model_obj, "max_tokens", json_number(p->max_tokens));
+    json_object_set(model_obj, "context_length", json_number(p->context_length));
+    json_object_set(model_obj, "stream", json_bool(p->stream));
+    if (p->thinking_enabled) {
+        json_value_t *thinking = json_object();
+        json_object_set(thinking, "type", json_string("enabled"));
+        json_object_set(model_obj, "thinking", thinking);
+    }
+    if (p->reasoning_effort)
+        json_object_set(model_obj, "reasoning_effort", json_string(p->reasoning_effort));
+}
+
+/* Configure API key for all models of a provider in settings.json.
+ * Adds known models for the provider if they don't exist.
+ * Returns the number of models configured, or -1 on error. */
+int config_set_provider_key(const char *provider, const char *api_key) {
+    if (!provider || !api_key) return -1;
+
+    /* Resolve settings.json path */
+    char *cgent_dir = config_cgent_dir();
+    char *path = os_path_join(cgent_dir, "settings.json");
+    free(cgent_dir);
+
+    /* Read existing settings, or start fresh */
+    json_value_t *root = NULL;
+    if (os_path_exists(path)) {
+        FILE *fp = fopen(path, "r");
+        if (fp) {
+            fseek(fp, 0, SEEK_END);
+            long sz = ftell(fp);
+            fseek(fp, 0, SEEK_SET);
+            if (sz > 0 && sz <= 65536) {
+                char *data = malloc(sz + 1);
+                size_t nread = fread(data, 1, sz, fp);
+                data[nread] = '\0';
+                root = json_parse(data);
+                free(data);
+            }
+            fclose(fp);
+        }
+    }
+    if (!root) root = json_object();
+
+    /* Ensure "models" object exists */
+    json_value_t *models_obj = json_object_get(root, "models");
+    if (!models_obj || !json_is_object(models_obj)) {
+        models_obj = json_object();
+        json_object_set(root, "models", models_obj);
+    }
+
+    int count = 0;
+
+    /* Step 1: Set API key on ALL existing models matching this provider */
+    json_iter_t it = json_iter_object(models_obj);
+    const char *key;
+    json_value_t *val;
+    while (json_iter_next(&it, &key, &val)) {
+        if (!val || !json_is_object(val)) continue;
+        json_value_t *pv = json_object_get(val, "provider");
+        if (pv && json_is_string(pv) && strcmp(json_string_value(pv), provider) == 0) {
+            /* Set/update the api_key */
+            json_object_del(val, "api_key");
+            json_object_set(val, "api_key", json_string(api_key));
+            count++;
+        }
+    }
+
+    /* Step 2: Add known presets for this provider that don't yet exist */
+    for (const model_preset_t *p = PROVIDER_PRESETS; p->name; p++) {
+        if (strcmp(p->provider, provider) != 0) continue;
+        /* Skip if model already exists */
+        if (json_object_get(models_obj, p->name)) continue;
+
+        json_value_t *model_obj = json_object();
+        apply_preset_to_json(model_obj, p, api_key);
+        json_object_set(models_obj, p->name, model_obj);
+        count++;
+    }
+
+    /* Write back */
+    char *json_str = json_stringify_pretty(root);
+    json_free(root);
+
+    FILE *fp = fopen(path, "w");
+    if (!fp) { free(path); free(json_str); return -1; }
+    fputs(json_str, fp);
+    fclose(fp);
+    free(json_str);
+    free(path);
+
+    return count;
+}
 
 char *config_resolve_agent_prompt(const char *agent_dir) {
     char *path = os_path_join(agent_dir, "AGENTS.md");

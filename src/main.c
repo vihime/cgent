@@ -26,7 +26,7 @@ static void print_usage(const char *prog) {
     printf("Options:\n");
     printf("  -p, --provider <name>    API provider: deepseek, openai, anthropic\n");
     printf("                           (default: deepseek)\n");
-    printf("  -m, --model <name>       Model name (default: deepseek-chat)\n");
+    printf("  -m, --model <name>       Model name (default: deepseek-v4-flash)\n");
     printf("  -k, --api-key <key>      API key (override for current provider)\n");
     printf("  -u, --base-url <url>     Override API base URL\n");
     printf("  -q, --query <text>       Single query mode (non-interactive)\n");
@@ -156,6 +156,18 @@ int main(int argc, char **argv) {
         if (strcmp(argv[i], "--subagent") == 0) {
             return subagent_main(argc, argv);
         }
+    }
+
+    /* ── Config subcommand: cgent config <provider> <api_key> ──── */
+    if (argc >= 4 && strcmp(argv[1], "config") == 0) {
+        int ret = config_set_provider_key(argv[2], argv[3]);
+        if (ret < 0) {
+            fprintf(stderr, "Error: Failed to write config\n");
+            return 1;
+        }
+        printf("Configured %d model(s) for provider '%s' in ~/.cgent/settings.json\n",
+               ret, argv[2]);
+        return 0;
     }
 
     cli_args_t args = cli_parse(argc, argv);

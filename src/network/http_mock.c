@@ -90,7 +90,7 @@ void http_mock_push_chat_response(const char *content,
     json_object_set(root, "id", json_string("mock-chat-completion"));
     json_object_set(root, "object", json_string("chat.completion"));
     json_object_set(root, "created", json_number(1234567890));
-    json_object_set(root, "model", json_string("deepseek-chat"));
+    json_object_set(root, "model", json_string("deepseek-v4-flash"));
     json_object_set(root, "choices", choices);
 
     char *body = json_stringify(root);

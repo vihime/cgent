@@ -29,7 +29,7 @@ void         agent_md_free(agent_md_t *am);
 #define CGENT_MAX_MODELS 64
 
 typedef struct {
-    char *name;             /* Model name (key), e.g. "deepseek-chat" */
+    char *name;             /* Model name (key), e.g. "deepseek-v4-flash" */
     char *provider;         /* "deepseek", "openai", "anthropic" */
     char *api_key;
     char *base_url;
@@ -85,7 +85,7 @@ typedef struct {
 } cgent_config_t;
 
 /* Load config from hierarchy:
- *   1. Built-in defaults (deepseek-chat model)
+ *   1. Built-in defaults (deepseek-v4-flash model)
  *   2. ~/.cgent/settings.json (models section)
  *   3. Environment variables (DEEPSEEK_API_KEY, etc. override per-model keys)
  *   4. AGENTS.md from agent directory
@@ -102,6 +102,11 @@ char *config_cgent_dir(void);
 
 /* Save the current model back to settings.json */
 void config_save_current_model(const cgent_config_t *cfg);
+
+/* Configure API key for all models of a provider in settings.json.
+ * Adds known models for the provider if they don't exist.
+ * Returns the number of models configured, or -1 on error. */
+int  config_set_provider_key(const char *provider, const char *api_key);
 
 /* Switch active model by name. Returns 0 on success, -1 if not found.
  * Updates all resolved fields (provider, api_key, base_url, etc.). */

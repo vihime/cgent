@@ -72,7 +72,7 @@ static char *build_task_json(subagent_config_t *cfg) {
     json_value_t *root = json_object();
     json_object_set(root, "type", json_string("task"));
     json_object_set(root, "provider", json_string(cfg->provider ? cfg->provider : "deepseek"));
-    json_object_set(root, "model", json_string(cfg->model ? cfg->model : "deepseek-chat"));
+    json_object_set(root, "model", json_string(cfg->model ? cfg->model : "deepseek-v4-flash"));
     json_object_set(root, "api_key", json_string(cfg->api_key ? cfg->api_key : ""));
     if (cfg->base_url)
         json_object_set(root, "base_url", json_string(cfg->base_url));
@@ -303,7 +303,7 @@ int subagent_main(int argc, char **argv) {
     json_value_t *max_tok_val = json_object_get(root, "max_tokens");
 
     const char *provider_name = provider_val ? json_string_value(provider_val) : "deepseek";
-    const char *model = model_val ? json_string_value(model_val) : "deepseek-chat";
+    const char *model = model_val ? json_string_value(model_val) : "deepseek-v4-flash";
     const char *api_key = api_key_val ? json_string_value(api_key_val) : "";
     const char *task_str = task_val ? json_string_value(task_val) : "Complete the task.";
 

@@ -5,7 +5,7 @@
  * ---
  * name: my-agent
  * description: A helper
- * model: deepseek-chat
+ * model: deepseek-v4-flash
  * mcp_servers:
  *   - filesystem
  * skills:

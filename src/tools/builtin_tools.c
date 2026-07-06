@@ -187,7 +187,7 @@ static char *tool_spawn_subagent(const char *name, const char *args_json, char *
 
     subagent_config_t cfg = {
         .provider     = (char *)(provider_val ? json_string_value(provider_val) : "deepseek"),
-        .model        = (char *)(model_val ? json_string_value(model_val) : "deepseek-chat"),
+        .model        = (char *)(model_val ? json_string_value(model_val) : "deepseek-v4-flash"),
         .api_key      = NULL,
         .system_prompt = (char *)(prompt_val ? json_string_value(prompt_val) : NULL),
         .task         = (char *)json_string_value(task_val),
