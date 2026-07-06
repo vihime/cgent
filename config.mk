@@ -26,10 +26,12 @@ ifeq ($(UNAME_S),Linux)
 else ifeq ($(UNAME_S),Darwin)
 	CFLAGS_BASE  += -DPLATFORM_MACOS
 	LDFLAGS_BASE  = -lssl -lcrypto -lpthread -lm
-	# macOS OpenSSL via Homebrew (if not in default path)
-	ifneq ($(wildcard /usr/local/opt/openssl/include),)
-		CFLAGS_BASE  += -I/usr/local/opt/openssl/include
-		LDFLAGS_BASE += -L/usr/local/opt/openssl/lib
+	# macOS OpenSSL via Homebrew
+	# Intel: /usr/local/opt/openssl, Apple Silicon: /opt/homebrew/opt/openssl
+	BREW_OPENSSL := $(firstword $(wildcard /opt/homebrew/opt/openssl/include /usr/local/opt/openssl/include))
+	ifneq ($(BREW_OPENSSL),)
+		CFLAGS_BASE  += -I$(BREW_OPENSSL)
+		LDFLAGS_BASE += -L$(subst /include,/lib,$(BREW_OPENSSL))
 	endif
 else
 	# Windows (MinGW-w64 / MSYS2)
