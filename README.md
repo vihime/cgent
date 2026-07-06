@@ -126,7 +126,7 @@ Skills become REPL commands (e.g., `/code-review`) and appear in `/skills`.
 
 ### Session Management
 
-Sessions are auto-saved to `~/.cgent/sessions/<uuid>/session.json` after each interaction. The session JSON contains the full conversation history, model config, and system prompt.
+Sessions are auto-saved to `~/.cgent/sessions/<uuid>/session.jsonl` after each interaction. The JSONL file contains one JSON object per line: a metadata header line followed by one line per message with the full conversation history, raw API responses, model config, and system prompt.
 
 ```
 Session: f8ee8a4c-11ff-4f3b-8f17-b7e1dcd4d439

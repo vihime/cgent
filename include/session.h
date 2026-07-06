@@ -1,8 +1,8 @@
 /*
  * session.h — Session persistence
  *
- * Sessions are saved to ~/.cgent/sessions/<uuid>/session.json
- * Contains conversation history, model config, and system prompt.
+ * Sessions are saved to ~/.cgent/sessions/<uuid>/session.jsonl
+ * JSONL format: one JSON object per line (metadata + messages).
  */
 #ifndef SESSION_H
 #define SESSION_H

@@ -26,6 +26,10 @@ void message_clear(message_t *msg) {
     msg->content = NULL;
     free(msg->name);
     msg->name = NULL;
+    free(msg->reasoning_content);
+    msg->reasoning_content = NULL;
+    free(msg->raw_response);
+    msg->raw_response = NULL;
     for (int i = 0; i < msg->n_tool_calls; i++) {
         free(msg->tool_calls[i].id);
         free(msg->tool_calls[i].name);
@@ -50,6 +54,8 @@ message_t *message_copy(const message_t *msg) {
     copy->role = msg->role;
     if (msg->content) copy->content = strdup(msg->content);
     if (msg->name) copy->name = strdup(msg->name);
+    if (msg->reasoning_content) copy->reasoning_content = strdup(msg->reasoning_content);
+    if (msg->raw_response) copy->raw_response = strdup(msg->raw_response);
 
     /* Deep copy tool calls */
     if (msg->n_tool_calls > 0) {

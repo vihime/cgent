@@ -351,8 +351,11 @@ int main(int argc, char **argv) {
         free(qmsg.content);
 
         if (cfg->stream) {
-            agent_chat_stream(agent, args.query, on_token, NULL);
+            message_t *resp = agent_chat_stream(agent, args.query, on_token, NULL);
             printf("\n"); fflush(stdout);
+            /* Add response to session */
+            if (resp) session_add_message(session, resp);
+            message_free(resp);
         } else {
             message_t *resp = agent_chat(agent, args.query);
             if (resp && resp->content) {
@@ -451,6 +454,7 @@ int main(int argc, char **argv) {
                             free(md_path);
                             free(ag_path);
                         }
+                        printf("Total: %d agent(s)\n", count);
                         closedir(d);
                     } else {
                         printf("  (no agents directory)\n");
@@ -835,8 +839,10 @@ compact_done:;
                 free(umsg.content);
 
                 if (cfg->stream) {
-                    agent_chat_stream(agent, line, on_token, NULL);
+                    message_t *resp = agent_chat_stream(agent, line, on_token, NULL);
                     printf("\n"); fflush(stdout);
+                    if (resp) session_add_message(session, resp);
+                    message_free(resp);
                 } else {
                     message_t *resp = agent_chat(agent, line);
                     if (resp) {

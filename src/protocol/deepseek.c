@@ -219,6 +219,12 @@ static message_t *deepseek_parse_response(const char *body) {
         msg->content = strdup(json_string_value(content));
     }
 
+    /* Reasoning content (DeepSeek R1, OpenAI o1, etc.) */
+    json_value_t *reasoning = json_object_get(message, "reasoning_content");
+    if (reasoning && json_is_string(reasoning)) {
+        msg->reasoning_content = strdup(json_string_value(reasoning));
+    }
+
     /* Tool calls */
     json_value_t *tool_calls = json_object_get(message, "tool_calls");
     if (tool_calls && json_is_array(tool_calls)) {
@@ -268,6 +274,12 @@ static message_t *deepseek_parse_chunk(const char *sse_data) {
             json_value_t *content = json_object_get(d, "content");
             if (content && json_is_string(content)) {
                 delta->content = strdup(json_string_value(content));
+            }
+
+            /* Reasoning content (DeepSeek R1, OpenAI o1 streaming) */
+            json_value_t *reasoning = json_object_get(d, "reasoning_content");
+            if (reasoning && json_is_string(reasoning)) {
+                delta->reasoning_content = strdup(json_string_value(reasoning));
             }
 
             /* Tool calls */

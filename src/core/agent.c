@@ -460,8 +460,16 @@ message_t *agent_chat(agent_t *agent, const char *user_input) {
             break;
         }
 
-        /* Copy tool calls from the parsed response */
-        /* (they were parsed into the message by the provider) */
+        /* Build API response summary for session logging */
+        {
+            json_value_t *summary = json_object();
+            json_object_set(summary, "content",
+                assistant_msg->content ? json_string(assistant_msg->content) : json_string(""));
+            json_object_set(summary, "reasoning_content",
+                assistant_msg->reasoning_content ? json_string(assistant_msg->reasoning_content) : json_string(""));
+            assistant_msg->raw_response = json_stringify(summary);
+            json_free(summary);
+        }
 
         if (assistant_msg->n_tool_calls > 0) {
             if (agent->verbose) {
@@ -553,6 +561,8 @@ typedef struct {
     void *token_ctx;
     char *text_buf;
     size_t text_len;
+    char *reasoning_buf;  /* Accumulated reasoning_content deltas */
+    size_t reasoning_len;
     bool verbose;
     /* Tool call merger */
     int ptc_index[16];
@@ -575,6 +585,14 @@ static bool stream_sse_event(const sse_event_t *ev, void *p) {
         rx->text_len += dl;
         rx->text_buf[rx->text_len] = '\0';
         if (rx->on_token) rx->on_token(delta->content, rx->token_ctx);
+    }
+    /* Accumulate reasoning_content (DeepSeek R1, OpenAI o1 thinking) */
+    if (delta->reasoning_content) {
+        size_t rl = strlen(delta->reasoning_content);
+        rx->reasoning_buf = realloc(rx->reasoning_buf, rx->reasoning_len + rl + 1);
+        memcpy(rx->reasoning_buf + rx->reasoning_len, delta->reasoning_content, rl);
+        rx->reasoning_len += rl;
+        rx->reasoning_buf[rx->reasoning_len] = '\0';
     }
     for (int i = 0; i < delta->n_tool_calls; i++) {
         int idx = delta->n_tool_calls > 1 ? i : 0;
@@ -678,6 +696,17 @@ message_t *agent_chat_stream(agent_t *agent, const char *user_input,
             sse_parser_flush(rx.parser, NULL, NULL);
 
             if (rx.text_buf) rx.accum->content = rx.text_buf;
+            if (rx.reasoning_buf) rx.accum->reasoning_content = rx.reasoning_buf;
+            /* Build API response summary (content + reasoning_content) */
+            {
+                json_value_t *summary = json_object();
+                json_object_set(summary, "content",
+                    rx.accum->content ? json_string(rx.accum->content) : json_string(""));
+                json_object_set(summary, "reasoning_content",
+                    rx.accum->reasoning_content ? json_string(rx.accum->reasoning_content) : json_string(""));
+                rx.accum->raw_response = json_stringify(summary);
+                json_free(summary);
+            }
             /* Flush merged tool calls */
             for (int i = 0; i < rx.n_ptc; i++) {
                 if (rx.ptc_id[i] && rx.ptc_id[i][0])
@@ -717,6 +746,16 @@ message_t *agent_chat_stream(agent_t *agent, const char *user_input,
             }
             assistant_msg = agent_parse_response_body(
                 agent->api, resp->body, agent->verbose, on_token, ctx);
+            /* Build API response summary for session logging */
+            if (assistant_msg) {
+                json_value_t *summary = json_object();
+                json_object_set(summary, "content",
+                    assistant_msg->content ? json_string(assistant_msg->content) : json_string(""));
+                json_object_set(summary, "reasoning_content",
+                    assistant_msg->reasoning_content ? json_string(assistant_msg->reasoning_content) : json_string(""));
+                assistant_msg->raw_response = json_stringify(summary);
+                json_free(summary);
+            }
             http_response_free(resp);
         }
 

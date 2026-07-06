@@ -1,5 +1,9 @@
 /*
  * session.c — Session persistence to ~/.cgent/sessions/<uuid>/
+ *
+ * Sessions are saved in JSONL format: one JSON object per line.
+ *   Line 1:  metadata  (uuid, created_at, provider, model, system_prompt)
+ *   Line 2+: messages  (role, content, tool_calls, tool_results, raw_response)
  */
 #include "session.h"
 #include "json.h"
@@ -66,9 +70,59 @@ char *session_dir(const char *uuid) {
 
 static char *session_file(const char *uuid) {
     char *dir = session_dir(uuid);
-    char *file = os_path_join(dir, "session.json");
+    char *file = os_path_join(dir, "session.jsonl");
     free(dir);
     return file;
+}
+
+/* ── Serialize one message to a JSON object ─────────────────────── */
+
+static json_value_t *message_to_json(const message_t *m) {
+    json_value_t *jm = json_object();
+
+    switch (m->role) {
+    case MSG_ROLE_SYSTEM:    json_object_set(jm, "role", json_string("system")); break;
+    case MSG_ROLE_USER:      json_object_set(jm, "role", json_string("user")); break;
+    case MSG_ROLE_ASSISTANT:  json_object_set(jm, "role", json_string("assistant")); break;
+    case MSG_ROLE_TOOL:      json_object_set(jm, "role", json_string("tool")); break;
+    }
+    if (m->content) json_object_set(jm, "content", json_string(m->content));
+
+    /* Reasoning content (DeepSeek R1, OpenAI o1 thinking) */
+    if (m->reasoning_content && m->reasoning_content[0])
+        json_object_set(jm, "reasoning_content", json_string(m->reasoning_content));
+
+    /* Raw API response (for assistant messages) */
+    if (m->raw_response && m->raw_response[0])
+        json_object_set(jm, "raw_response", json_string(m->raw_response));
+
+    /* Tool calls */
+    if (m->n_tool_calls > 0) {
+        json_value_t *tcs = json_array();
+        for (int j = 0; j < m->n_tool_calls; j++) {
+            json_value_t *tc = json_object();
+            json_object_set(tc, "id", json_string(m->tool_calls[j].id));
+            json_object_set(tc, "name", json_string(m->tool_calls[j].name));
+            json_object_set(tc, "arguments", json_string(m->tool_calls[j].arguments));
+            json_array_append(tcs, tc);
+        }
+        json_object_set(jm, "tool_calls", tcs);
+    }
+
+    /* Tool results */
+    if (m->n_tool_results > 0) {
+        json_value_t *trs = json_array();
+        for (int j = 0; j < m->n_tool_results; j++) {
+            json_value_t *tr = json_object();
+            json_object_set(tr, "tool_call_id", json_string(m->tool_results[j].tool_call_id));
+            json_object_set(tr, "content", json_string(m->tool_results[j].content));
+            json_object_set(tr, "is_error", json_bool(m->tool_results[j].is_error));
+            json_array_append(trs, tr);
+        }
+        json_object_set(jm, "tool_results", trs);
+    }
+
+    return jm;
 }
 
 /* ── Save ────────────────────────────────────────────────────────── */
@@ -84,81 +138,148 @@ bool session_create(session_t *s, const cgent_config_t *cfg) {
 bool session_save(session_t *s, const cgent_config_t *cfg) {
     if (!s || !s->uuid) return false;
 
-    json_value_t *root = json_object();
-    json_object_set(root, "uuid", json_string(s->uuid));
-
-    /* Timestamp */
-    char ts[32];
-    snprintf(ts, sizeof(ts), "%ld", (long)time(NULL));
-    json_object_set(root, "created_at", json_string(ts));
-
-    json_object_set(root, "provider", json_string(cfg->provider));
-    json_object_set(root, "model", json_string(cfg->model));
-    if (cfg->system_prompt)
-        json_object_set(root, "system_prompt", json_string(cfg->system_prompt));
-
-    /* Messages */
-    json_value_t *msgs = json_array();
-    for (int i = 0; i < s->message_count; i++) {
-        message_t *m = &s->messages[i];
-        json_value_t *jm = json_object();
-
-        switch (m->role) {
-        case MSG_ROLE_SYSTEM:    json_object_set(jm, "role", json_string("system")); break;
-        case MSG_ROLE_USER:      json_object_set(jm, "role", json_string("user")); break;
-        case MSG_ROLE_ASSISTANT:  json_object_set(jm, "role", json_string("assistant")); break;
-        case MSG_ROLE_TOOL:      json_object_set(jm, "role", json_string("tool")); break;
-        }
-        if (m->content) json_object_set(jm, "content", json_string(m->content));
-
-        /* Tool calls */
-        if (m->n_tool_calls > 0) {
-            json_value_t *tcs = json_array();
-            for (int j = 0; j < m->n_tool_calls; j++) {
-                json_value_t *tc = json_object();
-                json_object_set(tc, "id", json_string(m->tool_calls[j].id));
-                json_object_set(tc, "name", json_string(m->tool_calls[j].name));
-                json_object_set(tc, "arguments", json_string(m->tool_calls[j].arguments));
-                json_array_append(tcs, tc);
-            }
-            json_object_set(jm, "tool_calls", tcs);
-        }
-
-        /* Tool results */
-        if (m->n_tool_results > 0) {
-            json_value_t *trs = json_array();
-            for (int j = 0; j < m->n_tool_results; j++) {
-                json_value_t *tr = json_object();
-                json_object_set(tr, "tool_call_id", json_string(m->tool_results[j].tool_call_id));
-                json_object_set(tr, "content", json_string(m->tool_results[j].content));
-                json_object_set(tr, "is_error", json_bool(m->tool_results[j].is_error));
-                json_array_append(trs, tr);
-            }
-            json_object_set(jm, "tool_results", trs);
-        }
-
-        json_array_append(msgs, jm);
-    }
-    json_object_set(root, "messages", msgs);
-
-    char *json_str = json_stringify(root);
-    json_free(root);
-
     char *dir = session_dir(s->uuid);
     if (!os_path_exists(dir)) os_mkdir_p(dir);
-    char *path = os_path_join(dir, "session.json");
+    char *path = os_path_join(dir, "session.jsonl");
     free(dir);
 
     FILE *fp = fopen(path, "w");
-    if (!fp) { free(path); free(json_str); return false; }
-    fputs(json_str, fp);
+    if (!fp) { free(path); return false; }
+
+    /* ── Line 1: Metadata ─────────────────────────────────────── */
+    json_value_t *meta = json_object();
+    json_object_set(meta, "type", json_string("metadata"));
+    json_object_set(meta, "uuid", json_string(s->uuid));
+
+    char ts[32];
+    snprintf(ts, sizeof(ts), "%ld", (long)time(NULL));
+    json_object_set(meta, "created_at", json_string(ts));
+
+    json_object_set(meta, "provider", json_string(cfg->provider));
+    json_object_set(meta, "model", json_string(cfg->model));
+    if (cfg->system_prompt)
+        json_object_set(meta, "system_prompt", json_string(cfg->system_prompt));
+
+    char *meta_str = json_stringify(meta);
+    json_free(meta);
+    fputs(meta_str, fp);
+    fputc('\n', fp);
+    free(meta_str);
+
+    /* ── Lines 2+: Messages ───────────────────────────────────── */
+    for (int i = 0; i < s->message_count; i++) {
+        json_value_t *jm = message_to_json(&s->messages[i]);
+        char *msg_str = json_stringify(jm);
+        json_free(jm);
+        fputs(msg_str, fp);
+        fputc('\n', fp);
+        free(msg_str);
+    }
+
     fclose(fp);
     free(path);
-    free(json_str);
     return true;
 }
 
 /* ── Load ────────────────────────────────────────────────────────── */
+
+/* Parse one message from a JSON object, appending to session */
+static void session_parse_message(session_t *s, json_value_t *jm) {
+    /* Skip metadata line (has "type" field) */
+    json_value_t *type = json_object_get(jm, "type");
+    if (type && json_is_string(type)) {
+        /* This is the metadata line — restore session-level fields */
+        json_value_t *v = json_object_get(jm, "uuid");
+        if (v && json_is_string(v)) {
+            free(s->uuid);
+            s->uuid = strdup(json_string_value(v));
+        }
+        v = json_object_get(jm, "provider");
+        if (v && json_is_string(v)) {
+            free(s->provider);
+            s->provider = strdup(json_string_value(v));
+        }
+        v = json_object_get(jm, "model");
+        if (v && json_is_string(v)) {
+            free(s->model);
+            s->model = strdup(json_string_value(v));
+        }
+        v = json_object_get(jm, "system_prompt");
+        if (v && json_is_string(v)) {
+            free(s->system_prompt);
+            s->system_prompt = strdup(json_string_value(v));
+        }
+        v = json_object_get(jm, "created_at");
+        if (v && json_is_string(v)) {
+            free(s->created_at);
+            s->created_at = strdup(json_string_value(v));
+        }
+        return;
+    }
+
+    /* Regular message line */
+    if (s->message_count >= s->message_cap) {
+        s->message_cap = s->message_cap ? s->message_cap * 2 : 64;
+        s->messages = realloc(s->messages, s->message_cap * sizeof(message_t));
+    }
+
+    message_t *m = &s->messages[s->message_count];
+    memset(m, 0, sizeof(message_t));
+
+    json_value_t *v = json_object_get(jm, "role");
+    const char *role = v ? json_string_value(v) : "user";
+    if (strcmp(role, "system") == 0) m->role = MSG_ROLE_SYSTEM;
+    else if (strcmp(role, "assistant") == 0) m->role = MSG_ROLE_ASSISTANT;
+    else if (strcmp(role, "tool") == 0) m->role = MSG_ROLE_TOOL;
+    else m->role = MSG_ROLE_USER;
+
+    v = json_object_get(jm, "content");
+    if (v && json_is_string(v)) m->content = strdup(json_string_value(v));
+
+    /* Reasoning content */
+    v = json_object_get(jm, "reasoning_content");
+    if (v && json_is_string(v)) m->reasoning_content = strdup(json_string_value(v));
+
+    /* Raw API response */
+    v = json_object_get(jm, "raw_response");
+    if (v && json_is_string(v)) m->raw_response = strdup(json_string_value(v));
+
+    /* Tool calls */
+    json_value_t *tcs = json_object_get(jm, "tool_calls");
+    if (tcs && json_is_array(tcs)) {
+        int tn = json_array_length(tcs);
+        for (int j = 0; j < tn; j++) {
+            json_value_t *tc = json_array_get(tcs, j);
+            json_value_t *tid = json_object_get(tc, "id");
+            json_value_t *tnm = json_object_get(tc, "name");
+            json_value_t *targs = json_object_get(tc, "arguments");
+            message_add_tool_call(m,
+                tid ? json_string_value(tid) : "",
+                tnm ? json_string_value(tnm) : "",
+                targs ? json_string_value(targs) : "{}");
+        }
+    }
+
+    /* Tool results */
+    json_value_t *trs = json_object_get(jm, "tool_results");
+    if (trs && json_is_array(trs)) {
+        int tn = json_array_length(trs);
+        for (int j = 0; j < tn; j++) {
+            json_value_t *tr = json_array_get(trs, j);
+            json_value_t *tid = json_object_get(tr, "tool_call_id");
+            json_value_t *tcnt = json_object_get(tr, "content");
+            json_value_t *terr = json_object_get(tr, "is_error");
+            if (tid) {
+                message_add_tool_result(m,
+                    json_string_value(tid),
+                    tcnt ? json_string_value(tcnt) : "",
+                    terr ? json_bool_value(terr) : false);
+            }
+        }
+    }
+
+    s->message_count++;
+}
 
 session_t *session_load(const char *uuid) {
     if (!uuid) return NULL;
@@ -168,95 +289,46 @@ session_t *session_load(const char *uuid) {
 
     FILE *fp = fopen(path, "r");
     if (!fp) { free(path); return NULL; }
-    fseek(fp, 0, SEEK_END);
-    long sz = ftell(fp);
-    fseek(fp, 0, SEEK_SET);
-    if (sz <= 0 || sz > (16 * 1024 * 1024)) { fclose(fp); free(path); return NULL; }
-    char *data = malloc(sz + 1);
-    size_t nread = fread(data, 1, sz, fp);
-    data[nread] = '\0';
+
+    session_t *s = calloc(1, sizeof(session_t));
+    if (!s) { fclose(fp); free(path); return NULL; }
+    s->message_cap = 64;
+    s->messages = calloc(s->message_cap, sizeof(message_t));
+
+    /* Read line by line */
+    char *line = NULL;
+    size_t line_cap = 0;
+
+    while (1) {
+        ssize_t nread = getline(&line, &line_cap, fp);
+        if (nread < 0) break; /* EOF or error */
+
+        /* Strip trailing newline */
+        if (nread > 0 && line[nread - 1] == '\n') {
+            line[nread - 1] = '\0';
+            nread--;
+        }
+        if (nread > 0 && line[nread - 1] == '\r') {
+            line[nread - 1] = '\0';
+        }
+
+        /* Skip empty lines */
+        if (nread == 0) continue;
+
+        json_value_t *jm = json_parse(line);
+        if (!jm) continue; /* Skip unparseable lines */
+
+        session_parse_message(s, jm);
+        json_free(jm);
+    }
+
+    free(line);
     fclose(fp);
     free(path);
 
-    json_value_t *root = json_parse(data);
-    free(data);
-    if (!root) return NULL;
+    /* If no uuid was restored from metadata, use the parameter */
+    if (!s->uuid) s->uuid = strdup(uuid);
 
-    session_t *s = calloc(1, sizeof(session_t));
-
-    json_value_t *v = json_object_get(root, "uuid");
-    if (v && json_is_string(v)) s->uuid = strdup(json_string_value(v));
-
-    v = json_object_get(root, "provider");
-    if (v && json_is_string(v)) s->provider = strdup(json_string_value(v));
-
-    v = json_object_get(root, "model");
-    if (v && json_is_string(v)) s->model = strdup(json_string_value(v));
-
-    v = json_object_get(root, "system_prompt");
-    if (v && json_is_string(v)) s->system_prompt = strdup(json_string_value(v));
-
-    /* Messages */
-    json_value_t *msgs = json_object_get(root, "messages");
-    if (msgs && json_is_array(msgs)) {
-        int n = json_array_length(msgs);
-        s->message_cap = n + 64;
-        s->messages = calloc(s->message_cap, sizeof(message_t));
-
-        for (int i = 0; i < n; i++) {
-            json_value_t *jm = json_array_get(msgs, i);
-            if (!jm || !json_is_object(jm)) continue;
-
-            message_t *m = &s->messages[s->message_count];
-            v = json_object_get(jm, "role");
-            const char *role = v ? json_string_value(v) : "user";
-            if (strcmp(role, "system") == 0) m->role = MSG_ROLE_SYSTEM;
-            else if (strcmp(role, "assistant") == 0) m->role = MSG_ROLE_ASSISTANT;
-            else if (strcmp(role, "tool") == 0) m->role = MSG_ROLE_TOOL;
-            else m->role = MSG_ROLE_USER;
-
-            v = json_object_get(jm, "content");
-            if (v && json_is_string(v)) m->content = strdup(json_string_value(v));
-
-            /* Tool calls */
-            json_value_t *tcs = json_object_get(jm, "tool_calls");
-            if (tcs && json_is_array(tcs)) {
-                int tn = json_array_length(tcs);
-                for (int j = 0; j < tn; j++) {
-                    json_value_t *tc = json_array_get(tcs, j);
-                    json_value_t *tid = json_object_get(tc, "id");
-                    json_value_t *tnm = json_object_get(tc, "name");
-                    json_value_t *targs = json_object_get(tc, "arguments");
-                    message_add_tool_call(m,
-                        tid ? json_string_value(tid) : "",
-                        tnm ? json_string_value(tnm) : "",
-                        targs ? json_string_value(targs) : "{}");
-                }
-            }
-
-            /* Tool results */
-            json_value_t *trs = json_object_get(jm, "tool_results");
-            if (trs && json_is_array(trs)) {
-                int tn = json_array_length(trs);
-                for (int j = 0; j < tn; j++) {
-                    json_value_t *tr = json_array_get(trs, j);
-                    json_value_t *tid = json_object_get(tr, "tool_call_id");
-                    json_value_t *tcnt = json_object_get(tr, "content");
-                    json_value_t *terr = json_object_get(tr, "is_error");
-                    if (tid) {
-                        message_add_tool_result(m,
-                            json_string_value(tid),
-                            tcnt ? json_string_value(tcnt) : "",
-                            terr ? json_bool_value(terr) : false);
-                    }
-                }
-            }
-
-            s->message_count++;
-        }
-    }
-
-    json_free(root);
     return s;
 }
 

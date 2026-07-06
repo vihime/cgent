@@ -35,6 +35,8 @@ typedef struct {
     message_role_t role;
     char *content;              /* Text content (nullable for tool calls) */
     char *name;                 /* Optional name for the message sender */
+    char *reasoning_content;    /* Thinking/reasoning content (R1, o1, etc.) */
+    char *raw_response;         /* Raw HTTP response body (for session logging) */
     tool_call_t *tool_calls;    /* Array (assistant role) */
     int n_tool_calls;
     tool_result_t *tool_results; /* Array (tool role) */
