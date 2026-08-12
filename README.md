@@ -347,6 +347,17 @@ Approve? [y/N] n
 Single-shot `-q` mode and `--yes` skip the prompts (the command is
 explicitly user-initiated), and subagent processes are non-interactive.
 
+### Parallel Tool Execution
+
+When the model returns multiple tool calls in one response, cgent runs
+independent tools in parallel (up to 32 threads) instead of one at a
+time. Tools that share mutable state — the `confirm` tool (stdin) and
+MCP tools (one stdio pipe per server session) — stay sequential. Tool
+results are appended in call order regardless of completion order.
+
+Configure per model in `settings.json` (`"parallel_tools": true`, the
+default) or disable at runtime with `--no-parallel-tools`.
+
 ## Skill Management
 
 Skills are markdown definitions in `~/.cgent/skills/<name>/SKILL.md` with

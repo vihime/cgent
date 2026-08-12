@@ -14,6 +14,7 @@
 #include "network.h"
 #include "tools.h"
 
+#include <pthread.h>
 #include <unistd.h>
 
 #include <stdio.h>
@@ -305,6 +306,114 @@ static void agent_maybe_manage_context(agent_t *agent) {
     agent_trim_old_messages(agent);
 }
 
+/* ── Tool execution (parallel where safe) ───────────────────────── */
+
+typedef struct {
+    pthread_t thread;
+    bool thread_started;
+    const tool_call_t *tc;
+    char *result;               /* tool output or NULL */
+    char *error;                /* error string or NULL */
+} tool_job_t;
+
+static void *tool_job_run(void *arg) {
+    tool_job_t *job = (tool_job_t *)arg;
+    job->result = tool_execute(job->tc->name, job->tc->arguments,
+                               30000, &job->error);
+    return NULL;
+}
+
+/* Execute all tool calls of an assistant message and append the tool
+ * result messages to the conversation (in tool-call order). Tools
+ * marked thread_safe run in parallel; others run sequentially. */
+static int agent_execute_tools(agent_t *agent, message_t *assistant_msg) {
+    if (!agent || !assistant_msg) return -1;
+    int n = assistant_msg->n_tool_calls;
+    if (n <= 0) return 0;
+
+    bool parallel = agent->provider.parallel_tools;
+    tool_job_t *jobs = calloc(n, sizeof(tool_job_t));
+    if (!jobs) return -1;
+
+    for (int i = 0; i < n; i++) {
+        jobs[i].tc = &assistant_msg->tool_calls[i];
+        if (agent->verbose) {
+            fprintf(stderr, "[agent] Executing tool: %s(%s)\n",
+                    jobs[i].tc->name, jobs[i].tc->arguments);
+        }
+    }
+
+    /* Launch parallel jobs for thread-safe tools (cap at 32 threads) */
+    int launched = 0;
+    if (parallel) {
+        for (int i = 0; i < n && launched < 32; i++) {
+            tool_t *tool = tool_registry_find(assistant_msg->tool_calls[i].name);
+            if (tool && !tool->thread_safe) continue;
+            if (pthread_create(&jobs[i].thread, NULL, tool_job_run,
+                               &jobs[i]) == 0) {
+                jobs[i].thread_started = true;
+                launched++;
+            } else {
+                /* Thread creation failed — run inline */
+                jobs[i].result = tool_execute(jobs[i].tc->name,
+                                              jobs[i].tc->arguments,
+                                              30000, &jobs[i].error);
+            }
+        }
+    }
+
+    /* Run non-thread-safe tools sequentially in the calling thread */
+    for (int i = 0; i < n; i++) {
+        if (jobs[i].thread_started) continue;
+        tool_t *tool = tool_registry_find(assistant_msg->tool_calls[i].name);
+        bool can_parallel = tool && tool->thread_safe;
+        if (parallel && can_parallel) continue; /* already handled */
+        jobs[i].result = tool_execute(jobs[i].tc->name, jobs[i].tc->arguments,
+                                      30000, &jobs[i].error);
+    }
+
+    /* Collect parallel results */
+    for (int i = 0; i < n; i++) {
+        if (jobs[i].thread_started)
+            pthread_join(jobs[i].thread, NULL);
+    }
+
+    /* Append tool result messages in tool-call order */
+    for (int i = 0; i < n; i++) {
+        if (agent->verbose) {
+            if (jobs[i].result) {
+                size_t rlen = strlen(jobs[i].result);
+                fprintf(stderr, "[agent] Tool result (%s): %.*s%s\n",
+                        jobs[i].tc->name,
+                        (int)(rlen < 400 ? rlen : 400), jobs[i].result,
+                        rlen > 400 ? "..." : "");
+            } else {
+                fprintf(stderr, "[agent] Tool error (%s): %s\n",
+                        jobs[i].tc->name,
+                        jobs[i].error ? jobs[i].error : "unknown");
+            }
+        }
+
+        message_t tool_msg = {
+            .role = MSG_ROLE_TOOL,
+            .content = NULL,
+            .n_tool_calls = 0,
+            .n_tool_results = 1,
+            .tool_results = calloc(1, sizeof(tool_result_t)),
+        };
+        tool_msg.tool_results[0].tool_call_id = strdup(jobs[i].tc->id);
+        tool_msg.tool_results[0].content = jobs[i].result
+            ? jobs[i].result
+            : strdup(jobs[i].error ? jobs[i].error : "");
+        tool_msg.tool_results[0].is_error = (jobs[i].result == NULL);
+        free(jobs[i].error);
+        agent_add_message(agent, &tool_msg);
+    }
+
+    free(jobs);
+    return 0;
+}
+
 /* ── Agent lifecycle ────────────────────────────────────────────── */
 
 agent_t *agent_create(provider_config_t *config, struct api_provider *api) {
@@ -324,6 +433,7 @@ agent_t *agent_create(provider_config_t *config, struct api_provider *api) {
         agent->provider.context_length   = config->context_length;
         agent->provider.auto_compact     = config->auto_compact;
         agent->provider.compact_ratio    = config->compact_ratio;
+        agent->provider.parallel_tools   = config->parallel_tools;
         agent->provider.reasoning_effort   = config->reasoning_effort
                                            ? strdup(config->reasoning_effort) : NULL;
     }
@@ -798,48 +908,8 @@ message_t *agent_chat(agent_t *agent, const char *user_input) {
             /* Add assistant message to conversation once */
             agent_add_message(agent, assistant_msg);
 
-            /* Execute each tool call */
-            for (int i = 0; i < assistant_msg->n_tool_calls; i++) {
-                tool_call_t *tc = &assistant_msg->tool_calls[i];
-
-                if (agent->verbose) {
-                    fprintf(stderr, "[agent] Executing tool: %s(%s)\n",
-                            tc->name, tc->arguments);
-                }
-
-                char *error = NULL;
-                char *result = tool_execute(tc->name, tc->arguments, 30000, &error);
-
-                if (agent->verbose) {
-                    if (result) {
-                        size_t rlen = strlen(result);
-                        fprintf(stderr, "[agent] Tool result (%s): %.*s%s\n",
-                                tc->name,
-                                (int)(rlen < 400 ? rlen : 400), result,
-                                rlen > 400 ? "..." : "");
-                    } else {
-                        fprintf(stderr, "[agent] Tool error (%s): %s\n",
-                                tc->name, error ? error : "unknown");
-                    }
-                }
-
-                /* Build tool result message */
-                message_t tool_msg = {
-                    .role = MSG_ROLE_TOOL,
-                    .content = NULL,
-                    .n_tool_calls = 0,
-                    .n_tool_results = 1,
-                    .tool_results = calloc(1, sizeof(tool_result_t)),
-                };
-                tool_msg.tool_results[0].tool_call_id = strdup(tc->id);
-                tool_msg.tool_results[0].content = result ? result : strdup(error ? error : "");
-                tool_msg.tool_results[0].is_error = (result == NULL);
-
-                free(error);
-
-                /* Append tool result to conversation */
-                agent_add_message(agent, &tool_msg);
-            }
+            /* Execute tool calls (parallel where safe) */
+            agent_execute_tools(agent, assistant_msg);
 
             message_free(assistant_msg);
 
@@ -1168,44 +1238,8 @@ message_t *agent_chat_stream(agent_t *agent, const char *user_input,
             /* Add assistant message once before tool results */
             agent_add_message(agent, assistant_msg);
 
-            for (int i = 0; i < assistant_msg->n_tool_calls; i++) {
-                tool_call_t *tc = &assistant_msg->tool_calls[i];
-
-                if (agent->verbose) {
-                    fprintf(stderr, "[agent] Executing tool: %s(%s)\n",
-                            tc->name, tc->arguments);
-                }
-
-                char *error = NULL;
-                char *result = tool_execute(tc->name, tc->arguments, 30000, &error);
-
-                if (agent->verbose) {
-                    if (result) {
-                        size_t rlen = strlen(result);
-                        fprintf(stderr, "[agent] Tool result (%s): %.*s%s\n",
-                                tc->name,
-                                (int)(rlen < 400 ? rlen : 400), result,
-                                rlen > 400 ? "..." : "");
-                    } else {
-                        fprintf(stderr, "[agent] Tool error (%s): %s\n",
-                                tc->name, error ? error : "unknown");
-                    }
-                }
-
-                message_t tool_msg = {
-                    .role = MSG_ROLE_TOOL,
-                    .content = NULL,
-                    .n_tool_calls = 0,
-                    .n_tool_results = 1,
-                    .tool_results = calloc(1, sizeof(tool_result_t)),
-                };
-                tool_msg.tool_results[0].tool_call_id = strdup(tc->id);
-                tool_msg.tool_results[0].content = result ? result : strdup(error ? error : "");
-                tool_msg.tool_results[0].is_error = (result == NULL);
-                free(error);
-
-                agent_add_message(agent, &tool_msg);
-            }
+            /* Execute tool calls (parallel where safe) */
+            agent_execute_tools(agent, assistant_msg);
 
             message_free(assistant_msg);
             continue;

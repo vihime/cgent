@@ -10,10 +10,13 @@
 #include "protocol.h"
 #include "http_mock.h"
 #include "json.h"
+#include "platform.h"
+#include "tools.h"
 
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 
 static int tests = 0, passed = 0;
 
@@ -288,6 +291,84 @@ static void test_auto_compact_trim_fallback(void) {
     OK();
 }
 
+/* Slow tool used to observe parallel vs sequential execution. */
+static char *test_slow_tool(const char *name, const char *args, char **error) {
+    (void)name; (void)args; (void)error;
+    struct timespec ts = { 0, 400000000 };  /* 400ms */
+    nanosleep(&ts, NULL);
+    return strdup("{\"done\":true}");
+}
+
+/* Push a response with two test_slow tool calls. */
+static void push_two_tool_calls(void) {
+    json_value_t *root = json_object();
+    json_value_t *choices = json_array();
+    json_value_t *choice = json_object();
+    json_value_t *message = json_object();
+    json_object_set(message, "role", json_string("assistant"));
+    json_value_t *tcs = json_array();
+    for (int i = 0; i < 2; i++) {
+        json_value_t *tc = json_object();
+        char id[32];
+        snprintf(id, sizeof(id), "call_%d", i);
+        json_object_set(tc, "id", json_string(id));
+        json_object_set(tc, "type", json_string("function"));
+        json_value_t *func = json_object();
+        json_object_set(func, "name", json_string("test_slow"));
+        json_object_set(func, "arguments", json_string("{}"));
+        json_object_set(tc, "function", func);
+        json_array_append(tcs, tc);
+    }
+    json_object_set(message, "tool_calls", tcs);
+    json_object_set(message, "content", json_null());
+    json_object_set(choice, "index", json_number(0));
+    json_object_set(choice, "message", message);
+    json_object_set(choice, "finish_reason", json_string("tool_calls"));
+    json_array_append(choices, choice);
+    json_object_set(root, "choices", choices);
+    char *body = json_stringify(root);
+    http_mock_push(200, body);
+    free(body);
+    json_free(root);
+}
+
+static void test_parallel_tools(void) {
+    TEST("parallel tool execution is faster than sequential");
+    tool_registry_clear();
+    tool_t *slow = tool_create("test_slow", "slow test tool",
+                               "{\"type\":\"object\"}", test_slow_tool);
+    slow->thread_safe = true;
+    tool_registry_add(slow);
+
+    http_mock_enable();
+    push_two_tool_calls();
+    http_mock_push_chat_response("done", NULL, NULL, NULL);
+
+    provider_config_t cfg = test_config(false, 0);
+    cfg.parallel_tools = true;
+    agent_t *agent = agent_create(&cfg, g_api);
+    free(cfg.api_key); free(cfg.base_url); free(cfg.model);
+
+    int64_t t0 = os_time_ms();
+    message_t *resp = agent_chat(agent, "go");
+    int64_t elapsed = os_time_ms() - t0;
+    CHECK(resp != NULL);
+    CHECK(resp->content && strcmp(resp->content, "done") == 0);
+    CHECK(elapsed < 700);   /* 2 x 400ms sleeps would take ~800ms sequentially */
+
+    int tool_results = 0;
+    for (int i = 0; i < agent->n_messages; i++) {
+        if (agent->messages[i].role == MSG_ROLE_TOOL) tool_results++;
+    }
+    CHECK(tool_results == 2);
+
+    message_free(resp);
+    agent_free(agent);
+    http_mock_clear();
+    tool_registry_clear();
+    OK();
+}
+
 int main(void) {
     printf("Agent reliability tests:\n");
     provider_init();
@@ -306,6 +387,7 @@ int main(void) {
     test_estimate_tokens();
     test_auto_compact();
     test_auto_compact_trim_fallback();
+    test_parallel_tools();
 
     http_mock_disable();
     http_cleanup();

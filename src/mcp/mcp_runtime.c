@@ -126,6 +126,8 @@ int mcp_bridges_start(mcp_config_t *cfg, const char **names, int name_count,
                     ? tools[t].input_schema : "{\"type\":\"object\"}");
             tool->handler = mcp_tool_handler;
             tool->userdata = NULL;
+            /* MCP sessions share one stdio pipe — not concurrency-safe */
+            tool->thread_safe = false;
 
             if (g_mcp_tool_count < MAX_MCP_TOOLS) {
                 g_mcp_tools[g_mcp_tool_count].tool_name = strdup(full);

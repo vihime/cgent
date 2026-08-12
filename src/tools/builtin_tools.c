@@ -1727,6 +1727,14 @@ void builtin_tools_register(void) {
             tool_clear_mailbox);
         tool_registry_add(t);
     }
+
+    /* All built-ins except 'confirm' (shared stdin) are safe to run
+     * concurrently with other tools. */
+    for (int i = 0; i < registry_count(); i++) {
+        tool_t *t = (tool_t *)registry_get(i);
+        if (strcmp(t->name, "confirm") != 0)
+            t->thread_safe = true;
+    }
 }
 
 /* ── Tool lifecycle helpers ─────────────────────────────────────── */

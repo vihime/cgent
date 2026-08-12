@@ -37,6 +37,7 @@ static void print_usage(const char *prog) {
     printf("  -M, --max-tokens <n>     Max output tokens (default: 4096)\n");
     printf("      --retries <n>         Transient-failure retries per request (default: 3)\n");
     printf("      --no-auto-compact     Disable automatic context compaction\n");
+    printf("      --no-parallel-tools   Execute tool calls sequentially\n");
     printf("  -n, --no-stream          Disable streaming output\n");
     printf("  -y, --yes                Skip approval prompts for risky tools\n");
     printf("  -c, --config <path>      Config file path\n");
@@ -349,6 +350,7 @@ int main(int argc, char **argv) {
         .context_length     = cfg->context_length,
         .auto_compact       = cfg->auto_compact,
         .compact_ratio      = cfg->compact_ratio,
+        .parallel_tools     = cfg->parallel_tools,
     };
 
     /* Create agent */
@@ -726,6 +728,7 @@ int main(int argc, char **argv) {
                             agent->provider.context_length = cfg->context_length;
                             agent->provider.auto_compact = cfg->auto_compact;
                             agent->provider.compact_ratio = cfg->compact_ratio;
+                            agent->provider.parallel_tools = cfg->parallel_tools;
                             free(agent->provider.reasoning_effort);
                             agent->provider.reasoning_effort = cfg->reasoning_effort
                                 ? strdup(cfg->reasoning_effort) : NULL;

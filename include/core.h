@@ -60,6 +60,7 @@ typedef struct {
     tool_handler_t handler;     /* Execution function */
     void *userdata;             /* Opaque handler context (MCP sessions, etc.) */
     bool requires_approval;     /* Prompt the user before executing */
+    bool thread_safe;           /* Safe to run concurrently with other tools */
 } tool_t;
 
 /* ── Provider config ────────────────────────────────────────────── */
@@ -78,6 +79,7 @@ typedef struct {
     int context_length;         /* Model context window (tokens) */
     bool auto_compact;          /* Auto-compact when context is nearly full */
     double compact_ratio;       /* Fraction of context that triggers compaction */
+    bool parallel_tools;        /* Execute independent tool calls in parallel */
 } provider_config_t;
 
 /* ── Agent ──────────────────────────────────────────────────────── */

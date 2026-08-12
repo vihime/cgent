@@ -52,6 +52,7 @@ static void add_default_model(cgent_config_t *cfg, const char *name,
     m->max_retries = 3;
     m->auto_compact = true;
     m->compact_ratio = 0.75;
+    m->parallel_tools = true;
     /* Set context length based on provider defaults */
     if (strcmp(provider, "deepseek") == 0)      m->context_length = 1000000;
     else if (strcmp(provider, "openai") == 0)   m->context_length = 128000;
@@ -86,6 +87,7 @@ static cgent_config_t defaults(void) {
     cfg.max_retries   = 3;
     cfg.auto_compact  = true;
     cfg.compact_ratio = 0.75;
+    cfg.parallel_tools = true;
     cfg.cgent_dir     = config_cgent_dir();
 
     return cfg;
@@ -183,6 +185,9 @@ static void apply_settings_file(cgent_config_t *cfg) {
                 double r = json_number_value(v);
                 m->compact_ratio = r > 0 && r < 1 ? r : 0.75;
             }
+
+            v = json_object_get(val, "parallel_tools");
+            if (v && json_is_bool(v)) m->parallel_tools = json_bool_value(v);
 
             /* ── thinking: {"type": "enabled"/"disabled"} ── */
             json_value_t *thinking = json_object_get(val, "thinking");
@@ -287,6 +292,7 @@ static void resolve_active_model(cgent_config_t *cfg) {
     cfg->max_retries      = m->max_retries;
     cfg->auto_compact     = m->auto_compact;
     cfg->compact_ratio    = m->compact_ratio;
+    cfg->parallel_tools   = m->parallel_tools;
     free(cfg->reasoning_effort);
     cfg->reasoning_effort = m->reasoning_effort ? strdup(m->reasoning_effort) : NULL;
 

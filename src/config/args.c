@@ -38,6 +38,7 @@ cli_args_t cli_parse(int argc, char **argv) {
         {"max-tokens",  required_argument, 0, 'M'},
         {"retries",     required_argument, 0, 1002},
         {"no-auto-compact", no_argument,   0, 1003},
+        {"no-parallel-tools", no_argument, 0, 1004},
         {"yes",             no_argument,   0, 'y'},
         {"no-stream",   no_argument,       0, 'n'},
         {"config",      required_argument, 0, 'c'},
@@ -64,6 +65,7 @@ cli_args_t cli_parse(int argc, char **argv) {
         case 'M': args.max_tokens  = atoi(optarg); break;
         case 1002: args.retries    = atoi(optarg); break;
         case 1003: args.no_auto_compact = true; break;
+        case 1004: args.no_parallel_tools = true; break;
         case 'y': args.yes = true; break;
         case 'n': args.stream      = false; break;
         case 'c': args.config_path = optarg; break;
@@ -99,6 +101,7 @@ void config_apply_cli(cgent_config_t *cfg, const cli_args_t *args) {
     cfg->max_tokens  = args->max_tokens;
     if (args->retries >= 0) cfg->max_retries = args->retries;
     if (args->no_auto_compact) cfg->auto_compact = false;
+    if (args->no_parallel_tools) cfg->parallel_tools = false;
     cfg->stream      = args->stream;
     cfg->verbose     = args->verbose;
 }
