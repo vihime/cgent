@@ -230,6 +230,27 @@ Examples:
 | `clear_mailbox` | Clear mailbox messages |
 | `spawn_subagent` | Spawn a child cgent process for parallel work |
 
+### Subagent Enhancements
+
+Beyond the blocking `spawn_subagent` tool, cgent exposes an async subagent
+handle API for orchestration:
+
+- `subagent_spawn()` — start a child without blocking
+- `subagent_poll()` — process progress logs and follow-up answers
+  (delivered via an `on_event` callback)
+- `subagent_followup()` — send a new instruction mid-task; the child
+  continues its conversation and replies with an `update` event
+- `subagent_stop()` / `subagent_abort()` — graceful stop after the current
+  turn, or an immediate kill
+- `subagent_wait()` — block for the final result
+
+The child keeps its conversation state across follow-up turns, so a
+subtask can be steered iteratively without restarting. The synchronous
+`subagent_run()` still works unchanged.
+
+Plain `http://` base URLs are now supported by the HTTP client (useful for
+local LLM servers such as Ollama or vLLM), which the follow-up test uses.
+
 ## MCP Server Management
 
 cgent can manage [MCP](https://modelcontextprotocol.io) (Model Context

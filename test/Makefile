@@ -95,7 +95,7 @@ $(SRC_DIR)/%.o: $(SRC_DIR)/%.c
 
 # Run all tests
 test: test-json test-message test-config test-tools test-memory test-mcp \
-      test-skills test-reliability
+      test-skills test-reliability test-subagent
 	@echo "=== Running JSON tests ==="
 	@./test-json
 	@echo ""
@@ -119,6 +119,9 @@ test: test-json test-message test-config test-tools test-memory test-mcp \
 	@echo ""
 	@echo "=== Running Agent reliability tests ==="
 	@./test-reliability
+	@echo ""
+	@echo "=== Running Subagent tests ==="
+	@./test-subagent
 	@echo ""
 	@echo "=== All unit tests passed ==="
 

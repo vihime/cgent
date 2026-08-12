@@ -114,7 +114,7 @@ typedef struct {
     SSL *ssl;
 } tls_conn_t;
 
-static tls_conn_t *tls_connect(const char *host, int port) {
+static tls_conn_t *tls_connect(const char *host, int port, bool use_tls) {
     /* Resolve hostname */
     struct addrinfo hints = {0};
     hints.ai_family = AF_UNSPEC;
@@ -146,26 +146,34 @@ static tls_conn_t *tls_connect(const char *host, int port) {
         return NULL;
     }
 
-    /* TLS handshake */
-    SSL *ssl = SSL_new(ssl_ctx);
-    if (!ssl) {
-        close(sockfd);
-        return NULL;
-    }
-    SSL_set_fd(ssl, sockfd);
-    SSL_set_tlsext_host_name(ssl, host);
-
-    if (SSL_connect(ssl) != 1) {
-        fprintf(stderr, "SSL_connect failed: %s\n",
-                ERR_error_string(ERR_get_error(), NULL));
-        SSL_free(ssl);
-        close(sockfd);
-        return NULL;
-    }
-
     tls_conn_t *conn = malloc(sizeof(tls_conn_t));
+    if (!conn) {
+        close(sockfd);
+        return NULL;
+    }
     conn->sockfd = sockfd;
-    conn->ssl = ssl;
+    conn->ssl = NULL;
+
+    if (use_tls) {
+        /* TLS handshake */
+        SSL *ssl = SSL_new(ssl_ctx);
+        if (!ssl) {
+            close(sockfd);
+            free(conn);
+            return NULL;
+        }
+        SSL_set_fd(ssl, sockfd);
+        SSL_set_tlsext_host_name(ssl, host);
+        if (SSL_connect(ssl) != 1) {
+            fprintf(stderr, "SSL_connect failed: %s\n",
+                    ERR_error_string(ERR_get_error(), NULL));
+            SSL_free(ssl);
+            close(sockfd);
+            free(conn);
+            return NULL;
+        }
+        conn->ssl = ssl;
+    }
     return conn;
 }
 
@@ -181,7 +189,11 @@ static void tls_close(tls_conn_t *conn) {
 
 static int tls_send_all(tls_conn_t *conn, const char *data, size_t len) {
     while (len > 0) {
-        int n = SSL_write(conn->ssl, data, len);
+        int n;
+        if (conn->ssl)
+            n = SSL_write(conn->ssl, data, len);
+        else
+            n = (int)send(conn->sockfd, data, len, 0);
         if (n <= 0) return -1;
         data += n;
         len -= n;
@@ -201,7 +213,11 @@ static char *tls_read_line(tls_conn_t *conn) {
             cap *= 2;
             buf = realloc(buf, cap);
         }
-        int n = SSL_read(conn->ssl, &buf[len], 1);
+        int n;
+        if (conn->ssl)
+            n = SSL_read(conn->ssl, &buf[len], 1);
+        else
+            n = (int)recv(conn->sockfd, &buf[len], 1, 0);
         if (n <= 0) { free(buf); return NULL; }
         if (buf[len] == '\r') continue;
         if (buf[len] == '\n') { buf[len] = '\0'; return buf; }
@@ -215,7 +231,11 @@ static char *tls_read_n(tls_conn_t *conn, size_t n) {
     if (!buf) return NULL;
     size_t total = 0;
     while (total < n) {
-        int r = SSL_read(conn->ssl, buf + total, n - total);
+        int r;
+        if (conn->ssl)
+            r = SSL_read(conn->ssl, buf + total, n - total);
+        else
+            r = (int)recv(conn->sockfd, buf + total, n - total, 0);
         if (r <= 0) { free(buf); return NULL; }
         total += r;
     }
@@ -294,8 +314,8 @@ http_response_t *http_request(const http_request_t *req) {
     http_response_t *resp = calloc(1, sizeof(http_response_t));
     if (!resp) { url_free(url); return NULL; }
 
-    if (is_https) {
-        tls_conn_t *conn = tls_connect(url->host, url->port);
+    {
+        tls_conn_t *conn = tls_connect(url->host, url->port, is_https);
         if (!conn) { url_free(url); free(resp); return NULL; }
 
         /* Build and send request */
@@ -407,7 +427,6 @@ http_response_t *http_request(const http_request_t *req) {
 
         tls_close(conn);
     }
-    /* else: HTTP (non-TLS) — not implemented yet */
 
     url_free(url);
     return resp;
@@ -436,8 +455,8 @@ http_response_t *http_request_stream(const http_request_t *req,
     bool is_https = (strcmp(url->scheme, "https") == 0);
     http_response_t *resp = calloc(1, sizeof(http_response_t));
 
-    if (is_https) {
-        tls_conn_t *conn = tls_connect(url->host, url->port);
+    {
+        tls_conn_t *conn = tls_connect(url->host, url->port, is_https);
         if (!conn) { url_free(url); free(resp); return NULL; }
 
         size_t req_len;

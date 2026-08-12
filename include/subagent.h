@@ -8,10 +8,13 @@
  *   {"type":"task","provider":"deepseek","model":"...","api_key":"...",
  *    "system_prompt":"...","messages":[...],"tools":[...]}
  *   {"type":"tool_result","id":"call_xxx","result":"..."}
+ *   {"type":"followup","content":"..."}   (extra instruction mid-task)
+ *   {"type":"stop"}                       (finish after current turn)
  *
  * IPC Protocol (child → parent, over child's stdout):
  *   {"type":"tool_call","id":"call_xxx","name":"...","arguments":"..."}
  *   {"type":"result","content":"...","error":null}
+ *   {"type":"update","turn":N,"content":"..."}   (follow-up turn answer)
  *   {"type":"log","message":"..."}
  */
 #ifndef SUBAGENT_H
@@ -20,6 +23,16 @@
 #include "core.h"
 #include <stdbool.h>
 #include <unistd.h>
+
+/* ── Subagent events ────────────────────────────────────────────── */
+
+typedef enum {
+    SUBAGENT_EVENT_LOG = 0,     /* Progress / status text */
+    SUBAGENT_EVENT_UPDATE = 1,  /* Answer from a follow-up turn */
+} subagent_event_type_t;
+
+typedef void (*subagent_event_fn)(subagent_event_type_t type,
+                                  const char *text, void *ctx);
 
 /* ── Subagent configuration ──────────────────────────────────────── */
 
@@ -35,6 +48,9 @@ typedef struct {
     int max_tokens;
     int timeout_seconds;    /* 0 = no timeout */
     bool verbose;
+    /* Optional event callback for progress logs / follow-up updates */
+    subagent_event_fn on_event;
+    void *event_ctx;
 } subagent_config_t;
 
 /* ── Subagent result ─────────────────────────────────────────────── */
@@ -54,6 +70,34 @@ typedef struct {
  * returns the final result.
  * Returns malloc'd result, caller frees with subagent_result_free(). */
 subagent_result_t *subagent_run(subagent_config_t *config);
+
+/* ── Async subagent handle ──────────────────────────────────────── */
+
+/* Opaque handle to a running subagent. */
+typedef struct subagent_handle subagent_handle_t;
+
+/* Spawn a subagent without blocking. Returns a handle (or NULL with
+ * *err set). The first-turn answer arrives via on_event(UPDATE). */
+subagent_handle_t *subagent_spawn(subagent_config_t *config, char **err);
+
+/* Process pending messages from the child. Blocks up to timeout_ms.
+ * Returns the number of messages processed, or -1 on EOF. */
+int subagent_poll(subagent_handle_t *h, int timeout_ms);
+
+/* Send a follow-up instruction; the child answers with an UPDATE event. */
+int subagent_followup(subagent_handle_t *h, const char *content);
+
+/* Ask the child to finish after its current turn. */
+int subagent_stop(subagent_handle_t *h);
+
+/* Block until the subagent finishes; returns a malloc'd result. */
+subagent_result_t *subagent_wait(subagent_handle_t *h, int timeout_seconds);
+
+/* Kill the subagent immediately. */
+void subagent_abort(subagent_handle_t *h);
+
+/* Free a handle (after wait or abort). */
+void subagent_handle_free(subagent_handle_t *h);
 
 /* Free a subagent result */
 void subagent_result_free(subagent_result_t *result);
