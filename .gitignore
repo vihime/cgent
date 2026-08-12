@@ -12,6 +12,7 @@ test/test-tools
 test/test-integration
 test/test-memory
 test/test-subagent
+test/test-mcp
 
 # IDE / editor
 *.swp

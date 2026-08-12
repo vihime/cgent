@@ -97,6 +97,11 @@ void            config_free(cgent_config_t *config);
 /* Resolve system prompt from agent directory */
 char *config_resolve_agent_prompt(const char *agent_dir);
 
+/* Resolve the mcp_servers list from AGENTS.md in the agent directory.
+ * Returns a malloc'd array of names (caller frees each + array), or
+ * NULL if the agent directory has no AGENTS.md or no mcp_servers. */
+char **config_resolve_agent_mcp_servers(const char *agent_dir, int *count);
+
 /* Get/create ~/.cgent directory */
 char *config_cgent_dir(void);
 
@@ -132,6 +137,11 @@ typedef struct {
     bool verbose;
     bool help;
     bool version;
+
+    /* MCP servers to enable for this run (repeatable --mcp) */
+    char **mcp_enable;
+    int mcp_enable_count;
+    bool mcp_all;               /* --mcp-all: start every configured server */
 } cli_args_t;
 
 cli_args_t cli_parse(int argc, char **argv);

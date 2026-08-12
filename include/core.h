@@ -56,6 +56,7 @@ typedef struct {
     char *description;
     char *parameters_schema;    /* JSON Schema for the function parameters */
     tool_handler_t handler;     /* Execution function */
+    void *userdata;             /* Opaque handler context (MCP sessions, etc.) */
 } tool_t;
 
 /* ── Provider config ────────────────────────────────────────────── */

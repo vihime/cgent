@@ -7,6 +7,7 @@
 #include "cgent.h"
 #include "subagent.h"
 #include "session.h"
+#include "mcp.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -39,6 +40,11 @@ static void print_usage(const char *prog) {
     printf("  -v, --verbose            Verbose/debug output\n");
     printf("  -h, --help               Show this help\n");
     printf("  -V, --version            Show version\n");
+    printf("      --mcp <name>         Enable MCP server by config name (repeatable)\n");
+    printf("      --mcp-all            Enable all configured MCP servers\n");
+    printf("\nSubcommands:\n");
+    printf("  config <provider> <key>  Configure API key for a provider\n");
+    printf("  mcp <command>            Manage MCP servers (list/add/remove/test)\n");
     printf("\nAgent directory:\n");
     printf("  The agent directory must contain an AGENTS.md file\n");
     printf("  which provides the system prompt for the agent.\n");
@@ -168,6 +174,11 @@ int main(int argc, char **argv) {
         printf("Configured %d model(s) for provider '%s' in ~/.cgent/settings.json\n",
                ret, argv[2]);
         return 0;
+    }
+
+    /* ── MCP subcommand: cgent mcp ... ─────────────────────────── */
+    if (argc >= 2 && strcmp(argv[1], "mcp") == 0) {
+        return mcp_main(argc - 1, argv + 1);
     }
 
     cli_args_t args = cli_parse(argc, argv);
@@ -351,6 +362,49 @@ int main(int argc, char **argv) {
     if (cfg->verbose) {
         fprintf(stderr, "[cgent] Registered %d built-in tools\n",
                 agent->n_tools);
+    }
+
+    /* ── MCP bridge: enable configured MCP servers ─────────────── */
+    mcp_bridge_t *mcp_bridges = NULL;
+    int mcp_bridge_count = 0;
+    {
+        mcp_config_t *mcfg = mcp_config_load();
+        if (mcfg) {
+            int am_count = 0;
+            char **am_names = config_resolve_agent_mcp_servers(cfg->agent_dir,
+                                                               &am_count);
+            int cap = args.mcp_enable_count + am_count + 8;
+            const char **enabled = calloc(cap, sizeof(char *));
+            int name_count = 0;
+            if (enabled) {
+                for (int i = 0; i < args.mcp_enable_count; i++)
+                    enabled[name_count++] = args.mcp_enable[i];
+                for (int i = 0; i < am_count; i++)
+                    enabled[name_count++] = am_names[i];
+            }
+
+            if (args.mcp_all || name_count > 0) {
+                if (cfg->verbose) {
+                    fprintf(stderr, "[cgent] Starting MCP servers (%d requested)\n",
+                            name_count);
+                }
+                mcp_bridges_start(mcfg, enabled, name_count, args.mcp_all,
+                                  &mcp_bridges, &mcp_bridge_count);
+                for (int i = 0; i < mcp_bridge_count; i++) {
+                    for (int t = 0; t < mcp_bridges[i].tool_count; t++)
+                        agent_add_tool(agent, &mcp_bridges[i].tools[t]);
+                }
+                if (cfg->verbose) {
+                    fprintf(stderr, "[cgent] %d MCP server(s) connected, "
+                            "%d tool(s)\n", mcp_bridge_count,
+                            agent->n_tools);
+                }
+            }
+            free(enabled);
+            for (int i = 0; i < am_count; i++) free(am_names[i]);
+            free(am_names);
+            mcp_config_free(mcfg);
+        }
     }
 
     int rc = 0;
@@ -877,6 +931,7 @@ compact_done:;
     if (session && session->uuid && session->uuid[0]) {
         printf("\nResume: cgent --resume %s\n", session->uuid);
     }
+    mcp_bridges_stop(mcp_bridges, mcp_bridge_count);
     agent_free(agent);
     session_free(session);
     config_free(cfg);

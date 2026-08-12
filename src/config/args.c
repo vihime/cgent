@@ -41,6 +41,8 @@ cli_args_t cli_parse(int argc, char **argv) {
         {"verbose",     no_argument,       0, 'v'},
         {"help",        no_argument,       0, 'h'},
         {"version",     no_argument,       0, 'V'},
+        {"mcp",         required_argument, 0, 1000},
+        {"mcp-all",     no_argument,       0, 1001},
         {0, 0, 0, 0}
     };
 
@@ -62,6 +64,13 @@ cli_args_t cli_parse(int argc, char **argv) {
         case 'v': args.verbose     = true; break;
         case 'h': args.help        = true; break;
         case 'V': args.version     = true; break;
+        case 1000:
+            args.mcp_enable = realloc(args.mcp_enable,
+                (args.mcp_enable_count + 1) * sizeof(char *));
+            if (args.mcp_enable)
+                args.mcp_enable[args.mcp_enable_count++] = strdup(optarg);
+            break;
+        case 1001: args.mcp_all = true; break;
         default:
             fprintf(stderr, "Try --help for usage.\n");
             exit(1);

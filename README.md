@@ -18,6 +18,7 @@ cgent -q "What is 2+2?"                        # single query
 cgent -q "Read /etc/hostname"                  # with tool use
 cgent                                           # interactive REPL
 cgent --resume <uuid>                           # resume a session
+cgent mcp list                                  # manage MCP servers
 ```
 
 ## Requirements
@@ -227,6 +228,64 @@ Examples:
 | `check_mailbox` | Check for unread mailbox messages |
 | `clear_mailbox` | Clear mailbox messages |
 | `spawn_subagent` | Spawn a child cgent process for parallel work |
+
+## MCP Server Management
+
+cgent can manage [MCP](https://modelcontextprotocol.io) (Model Context
+Protocol) servers via the `mcp` subcommand. Servers are stored in
+`~/.cgent/mcp.json`.
+
+```bash
+# List configured servers
+cgent mcp list
+
+# Add a server (command + args + optional env/cwd)
+cgent mcp add filesystem \
+  --command npx \
+  --args "-y,@modelcontextprotocol/server-filesystem,/tmp" \
+  --env "MY_TOKEN=abc123" \
+  --cwd /home/user
+
+# Verify a server: spawns it and performs the MCP initialize handshake,
+# then lists its tools
+cgent mcp test filesystem
+
+# Remove a server
+cgent mcp remove filesystem
+```
+
+`cgent mcp test` talks to the server over stdio JSON-RPC (the standard MCP
+stdio transport) and reports the server name/version, protocol version, and
+the tools it exposes.
+
+### Using MCP Tools in Conversations
+
+Configured MCP servers can be connected at runtime — their tools are
+discovered via the `tools/list` handshake and exposed to the model as
+`<server>__<tool>` (e.g. `filesystem__read_file`). When the model calls
+one, cgent forwards the invocation to the server via `tools/call` and
+returns the result as a normal tool result.
+
+```bash
+# Enable specific servers (repeatable)
+cgent --mcp filesystem --mcp database
+
+# Enable every configured server
+cgent --mcp-all
+```
+
+Alternatively, list servers in the agent's `AGENTS.md` to enable them
+automatically for that agent:
+
+```markdown
+---
+mcp_servers:
+  - filesystem
+---
+```
+
+Servers that fail to start (or expose no tools) are reported as warnings
+on stderr and do not block the session.
 
 ## Architecture
 

@@ -18,6 +18,8 @@ MAILBOX_SRCS = src/mailbox/mailbox.c
 SESSION_SRCS = src/session/session.c
 SUBAGENT_SRCS = src/subagent/subagent.c
 CONFIG_SRCS = src/config/args.c src/config/agent_md.c src/config/config.c
+MCP_SRCS    = src/mcp/mcp_config.c src/mcp/mcp_client.c src/mcp/mcp_cli.c \
+              src/mcp/mcp_runtime.c
 JSON_SRCS   = src/json/json_wrapper.c
 PLAT_SRCS   = src/platform/os.c src/platform/utf8_input.c
 
@@ -26,7 +28,7 @@ THIRD_SRCS  = third_party/cJSON/cJSON.c
 ALL_SRCS    = src/main.c \
               $(CORE_SRCS) $(NET_SRCS) $(PROTO_SRCS) $(TOOL_SRCS) \
               $(SKILL_SRCS) $(MAILBOX_SRCS) $(SESSION_SRCS) $(SUBAGENT_SRCS) \
-              $(CONFIG_SRCS) $(JSON_SRCS) $(PLAT_SRCS) \
+              $(CONFIG_SRCS) $(MCP_SRCS) $(JSON_SRCS) $(PLAT_SRCS) \
               $(THIRD_SRCS)
 
 ALL_OBJS    = $(ALL_SRCS:.c=.o)

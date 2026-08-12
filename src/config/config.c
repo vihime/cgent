@@ -484,6 +484,29 @@ char *config_resolve_agent_prompt(const char *agent_dir) {
     return prompt;
 }
 
+char **config_resolve_agent_mcp_servers(const char *agent_dir, int *count) {
+    *count = 0;
+    if (!agent_dir) return NULL;
+    char *path = os_path_join(agent_dir, "AGENTS.md");
+    if (!path) return NULL;
+    if (!os_path_exists(path)) { free(path); return NULL; }
+    agent_md_t *am = agent_md_parse(path);
+    free(path);
+    if (!am) return NULL;
+
+    char **names = NULL;
+    if (am->mcp_servers_count > 0) {
+        names = calloc(am->mcp_servers_count, sizeof(char *));
+        if (names) {
+            for (int i = 0; i < am->mcp_servers_count; i++)
+                names[i] = strdup(am->mcp_servers[i]);
+            *count = am->mcp_servers_count;
+        }
+    }
+    agent_md_free(am);
+    return names;
+}
+
 /* ── Main config loading ────────────────────────────────────────── */
 
 cgent_config_t *config_load(void) {
