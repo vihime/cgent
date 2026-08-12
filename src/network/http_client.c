@@ -136,10 +136,6 @@ static tls_conn_t *tls_connect(const char *host, int port, bool use_tls) {
     for (struct addrinfo *rp = result; rp; rp = rp->ai_next) {
         sockfd = socket(rp->ai_family, rp->ai_socktype, rp->ai_protocol);
         if (sockfd < 0) continue;
-        /* Short receive timeout: lets blocking reads return periodically
-         * so SIGINT cancellation can be noticed. */
-        struct timeval tv = { .tv_sec = 0, .tv_usec = 200000 };
-        setsockopt(sockfd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
         if (connect(sockfd, rp->ai_addr, rp->ai_addrlen) == 0) break;
         close(sockfd);
         sockfd = -1;

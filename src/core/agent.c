@@ -1208,6 +1208,16 @@ message_t *agent_chat_stream(agent_t *agent, const char *user_input,
                     continue;
                 }
                 http_response_free(resp);
+                if (interrupt_requested()) {
+                    /* Cancelled while the stream was in flight */
+                    message_free(rx.accum);
+                    sse_parser_free(rx.parser);
+                    for (int i = 0; i < rx.n_ptc; i++) {
+                        free(rx.ptc_id[i]); free(rx.ptc_name[i]);
+                        free(rx.ptc_args[i]);
+                    }
+                    break;
+                }
 
                 /* Build API response summary (content + reasoning_content) */
                 {
@@ -1273,6 +1283,10 @@ message_t *agent_chat_stream(agent_t *agent, const char *user_input,
                 }
                 assistant_msg = NULL;
             } else {
+                if (interrupt_requested()) {
+                    http_response_free(resp);
+                    assistant_msg = NULL;
+                } else {
                 assistant_msg = agent_parse_response_body(
                     agent->api, resp->body, agent->verbose, on_token, ctx);
                 /* Build API response summary for session logging */
@@ -1286,6 +1300,7 @@ message_t *agent_chat_stream(agent_t *agent, const char *user_input,
                     json_free(summary);
                 }
                 http_response_free(resp);
+                }
             }
         }
 

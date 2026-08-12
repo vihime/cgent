@@ -6,9 +6,13 @@
 #include "http_mock.h"
 #include "platform.h"
 #include "tools.h"
+#include "interrupt.h"
+#include "protocol.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <pthread.h>
+#include <signal.h>
 #include <time.h>
 #include <unistd.h>
 #include <arpa/inet.h>
@@ -305,6 +309,193 @@ static void test_subagent_abort(void) {
     OK();
 }
 
+/* ── SSE streaming server (real socket regression tests) ────────── */
+
+static void write_chunk(int fd, const char *data) {
+    char hdr[32];
+    int hl = snprintf(hdr, sizeof(hdr), "%zx\r\n", strlen(data));
+    write(fd, hdr, hl);
+    write(fd, data, strlen(data));
+    write(fd, "\r\n", 2);
+}
+
+/* Serves a chunked SSE stream with configurable gaps between events.
+ * delay_before_ms > 0: hold the response before sending anything. */
+static pid_t start_sse_server(int *out_port, int gap_ms, int delay_before_ms) {
+    int lfd = socket(AF_INET, SOCK_STREAM, 0);
+    if (lfd < 0) return -1;
+    int one = 1;
+    setsockopt(lfd, SOL_SOCKET, SO_REUSEADDR, &one, sizeof(one));
+    struct sockaddr_in addr = {0};
+    addr.sin_family = AF_INET;
+    addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+    addr.sin_port = 0;
+    if (bind(lfd, (struct sockaddr *)&addr, sizeof(addr)) != 0 ||
+        listen(lfd, 4) != 0) {
+        close(lfd);
+        return -1;
+    }
+    socklen_t alen = sizeof(addr);
+    if (getsockname(lfd, (struct sockaddr *)&addr, &alen) != 0) {
+        close(lfd);
+        return -1;
+    }
+    *out_port = ntohs(addr.sin_port);
+
+    pid_t pid = fork();
+    if (pid == 0) {
+        int cfd = accept(lfd, NULL, NULL);
+        if (cfd >= 0) {
+            char buf[8192];
+            size_t total = 0;
+            while (total < sizeof(buf) - 1) {
+                ssize_t n = read(cfd, buf + total, sizeof(buf) - 1 - total);
+                if (n <= 0) break;
+                total += n;
+                buf[total] = '\0';
+                if (strstr(buf, "\r\n\r\n")) break;
+            }
+            if (delay_before_ms > 0) {
+                struct timespec ts = { delay_before_ms / 1000,
+                                       (delay_before_ms % 1000) * 1000000L };
+                nanosleep(&ts, NULL);
+            }
+            static const char *head =
+                "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\n"
+                "Transfer-Encoding: chunked\r\n\r\n";
+            write(cfd, head, strlen(head));
+            write_chunk(cfd,
+                "data: {\"choices\":[{\"index\":0,"
+                "\"delta\":{\"content\":\"hello \"}}]}\n\n");
+            if (gap_ms > 0) {
+                struct timespec ts = { gap_ms / 1000,
+                                       (gap_ms % 1000) * 1000000L };
+                nanosleep(&ts, NULL);
+            }
+            write_chunk(cfd,
+                "data: {\"choices\":[{\"index\":0,"
+                "\"delta\":{\"content\":\"world\"}}]}\n\n");
+            if (gap_ms > 0) {
+                struct timespec ts = { gap_ms / 1000,
+                                       (gap_ms % 1000) * 1000000L };
+                nanosleep(&ts, NULL);
+            }
+            write_chunk(cfd, "data: [DONE]\n\n");
+            write(cfd, "0\r\n\r\n", 5);
+            close(cfd);
+        }
+        close(lfd);
+        _exit(0);
+    }
+    close(lfd);
+    return pid;
+}
+
+static char g_tokens[1024];
+static int g_tok_len = 0;
+
+static void collect_token(const char *tok, void *ctx) {
+    (void)ctx;
+    size_t l = strlen(tok);
+    if (g_tok_len + l < sizeof(g_tokens) - 1) {
+        memcpy(g_tokens + g_tok_len, tok, l);
+        g_tok_len += l;
+        g_tokens[g_tok_len] = '\0';
+    }
+}
+
+static void test_streaming_sse_with_gap(void) {
+    TEST("streaming SSE survives silent gaps (no 200ms timeout)");
+    http_init();
+    provider_init();
+    api_provider_t *api = provider_get_by_name("deepseek");
+    CHECK(api != NULL);
+
+    int port = 0;
+    pid_t srv = start_sse_server(&port, 400, 0);
+    CHECK(srv > 0);
+    char base_url[128];
+    snprintf(base_url, sizeof(base_url), "http://127.0.0.1:%d", port);
+
+    provider_config_t cfg = {
+        .api_key = "dummy",
+        .base_url = base_url,
+        .model = "deepseek-chat",
+        .temperature = 0.0,
+        .max_tokens = 100,
+        .stream = true,
+        .max_retries = 0,
+    };
+    agent_t *agent = agent_create(&cfg, api);
+    CHECK(agent != NULL);
+    g_tok_len = 0;
+    g_tokens[0] = '\0';
+    interrupt_clear();
+    message_t *resp = agent_chat_stream(agent, "hi", collect_token, NULL);
+    CHECK(resp != NULL);
+    CHECK(resp->content && strcmp(resp->content, "hello world") == 0);
+    CHECK(strstr(g_tokens, "hello world") != NULL);
+
+    message_free(resp);
+    agent_free(agent);
+    waitpid(srv, NULL, 0);
+    http_cleanup();
+    OK();
+}
+
+static void *interrupt_timer(void *arg) {
+    (void)arg;
+    struct timespec ts = { 0, 500000000 };  /* 500ms */
+    nanosleep(&ts, NULL);
+    kill(getpid(), SIGINT);
+    return NULL;
+}
+
+static void test_streaming_interrupt_real_socket(void) {
+    TEST("streaming interrupt on a real socket (EINTR path)");
+    http_init();
+    provider_init();
+    api_provider_t *api = provider_get_by_name("deepseek");
+    CHECK(api != NULL);
+
+    int port = 0;
+    pid_t srv = start_sse_server(&port, 0, 3000);  /* 3s before any data */
+    CHECK(srv > 0);
+    char base_url[128];
+    snprintf(base_url, sizeof(base_url), "http://127.0.0.1:%d", port);
+
+    provider_config_t cfg = {
+        .api_key = "dummy",
+        .base_url = base_url,
+        .model = "deepseek-chat",
+        .temperature = 0.0,
+        .max_tokens = 100,
+        .stream = true,
+        .max_retries = 0,
+    };
+    agent_t *agent = agent_create(&cfg, api);
+    CHECK(agent != NULL);
+
+    interrupt_init();
+    interrupt_clear();
+    pthread_t tid;
+    CHECK(pthread_create(&tid, NULL, interrupt_timer, NULL) == 0);
+    int64_t t0 = os_time_ms();
+    message_t *resp = agent_chat_stream(agent, "hi", NULL, NULL);
+    int64_t elapsed = os_time_ms() - t0;
+    pthread_join(tid, NULL);
+    CHECK(resp == NULL);
+    CHECK(elapsed < 2500);
+    interrupt_clear();
+
+    message_free(resp);
+    agent_free(agent);
+    kill(srv, SIGKILL);
+    waitpid(srv, NULL, 0);
+    http_cleanup();
+    OK();
+}
+
 /* ── Main ───────────────────────────────────────────────────────── */
 
 int main(void) {
@@ -315,6 +506,8 @@ int main(void) {
     test_subagent_with_tools();
     test_subagent_followup();
     test_subagent_abort();
+    test_streaming_sse_with_gap();
+    test_streaming_interrupt_real_socket();
 
     printf("  %d/%d passed\n", passed, tests);
     return passed == tests ? 0 : 1;
