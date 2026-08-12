@@ -100,6 +100,41 @@ static char *openai_build_request(const agent_t *agent) {
     json_object_set(root, "temperature", json_number(agent->provider.temperature));
     json_object_set(root, "max_tokens", json_number(agent->provider.max_tokens));
 
+    /* Ask for usage in the final streamed chunk so token accounting works
+     * the same way it does for the DeepSeek provider. */
+    if (agent->provider.stream) {
+        json_value_t *stream_opts = json_object();
+        json_object_set(stream_opts, "include_usage", json_bool(true));
+        json_object_set(root, "stream_options", stream_opts);
+    }
+
+    /* Structured output. OpenAI expects the schema wrapped in a
+     * response_format.json_schema object, unlike the DeepSeek shape. */
+    if (agent->provider.response_format && agent->provider.response_format[0]) {
+        json_value_t *rf = json_object();
+        if (strcmp(agent->provider.response_format, "json_schema") == 0 &&
+            agent->provider.json_schema && agent->provider.json_schema[0]) {
+            json_object_set(rf, "type", json_string("json_schema"));
+            json_value_t *wrapped = json_object();
+            json_object_set(wrapped, "name", json_string("cgent_response"));
+            json_object_set(wrapped, "strict", json_bool(true));
+            json_value_t *schema = json_parse(agent->provider.json_schema);
+            if (schema) {
+                json_object_set(wrapped, "schema", schema);
+            }
+            json_object_set(rf, "json_schema", wrapped);
+        } else {
+            json_object_set(rf, "type", json_string("json_object"));
+        }
+        json_object_set(root, "response_format", rf);
+    }
+
+    /* o-series / reasoning-capable models accept reasoning_effort. */
+    if (agent->provider.reasoning_effort && agent->provider.reasoning_effort[0]) {
+        json_object_set(root, "reasoning_effort",
+                        json_string(agent->provider.reasoning_effort));
+    }
+
     char *result = json_stringify(root);
     json_free(root);
     return result;

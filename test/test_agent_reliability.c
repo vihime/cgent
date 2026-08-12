@@ -493,6 +493,192 @@ static void test_build_request_json_schema(void) {
     OK();
 }
 
+static void test_openai_build_request_alignment(void) {
+    TEST("openai request includes stream usage + structured output + reasoning");
+    provider_config_t cfg = test_config(true, 1);
+    cfg.response_format = strdup("json_schema");
+    cfg.json_schema = strdup(
+        "{\"type\":\"object\",\"properties\":{\"x\":{\"type\":\"string\"}}}");
+    cfg.reasoning_effort = strdup("high");
+
+    api_provider_t *api = provider_get_by_name("openai");
+    CHECK(api != NULL);
+    agent_t *agent = agent_create(&cfg, api);
+    free(cfg.api_key); free(cfg.base_url); free(cfg.model);
+    free(cfg.response_format); free(cfg.json_schema); free(cfg.reasoning_effort);
+
+    char *body = agent->api->build_request(agent);
+    CHECK(body != NULL);
+    json_value_t *root = json_parse(body);
+    CHECK(root != NULL);
+
+    json_value_t *stream_opts = root ? json_object_get(root, "stream_options") : NULL;
+    CHECK(stream_opts != NULL && json_is_object(stream_opts));
+    json_value_t *include_usage = stream_opts
+        ? json_object_get(stream_opts, "include_usage") : NULL;
+    CHECK(include_usage && json_is_bool(include_usage) &&
+          json_bool_value(include_usage));
+
+    json_value_t *rf = root ? json_object_get(root, "response_format") : NULL;
+    CHECK(rf != NULL && json_is_object(rf));
+    json_value_t *rf_type = rf ? json_object_get(rf, "type") : NULL;
+    CHECK(rf_type && json_is_string(rf_type) &&
+          strcmp(json_string_value(rf_type), "json_schema") == 0);
+    json_value_t *wrapped = rf ? json_object_get(rf, "json_schema") : NULL;
+    CHECK(wrapped != NULL && json_is_object(wrapped));
+    json_value_t *schema = wrapped ? json_object_get(wrapped, "schema") : NULL;
+    CHECK(schema != NULL && json_is_object(schema));
+
+    json_value_t *effort = root ? json_object_get(root, "reasoning_effort") : NULL;
+    CHECK(effort && json_is_string(effort) &&
+          strcmp(json_string_value(effort), "high") == 0);
+
+    json_free(root);
+    free(body);
+    agent_free(agent);
+    OK();
+}
+
+static void test_anthropic_parse_response(void) {
+    TEST("anthropic response parsing handles text/thinking/tool_use/usage");
+    const char *body =
+        "{\"type\":\"message\",\"role\":\"assistant\","
+        "\"content\":["
+        "{\"type\":\"text\",\"text\":\"hello\"},"
+        "{\"type\":\"thinking\",\"thinking\":\"plan\"},"
+        "{\"type\":\"tool_use\",\"id\":\"toolu_1\",\"name\":\"read_file\","
+        "\"input\":{\"path\":\"a.c\"}}"
+        "],\"usage\":{\"input_tokens\":10,\"output_tokens\":20}}";
+
+    api_provider_t *api = provider_get_by_name("anthropic");
+    CHECK(api != NULL);
+    message_t *msg = api->parse_response(body);
+    CHECK(msg != NULL);
+    CHECK(msg->content && strcmp(msg->content, "hello") == 0);
+    CHECK(msg->reasoning_content && strcmp(msg->reasoning_content, "plan") == 0);
+    CHECK(msg->n_tool_calls == 1);
+    CHECK(msg->tool_calls[0].id && strcmp(msg->tool_calls[0].id, "toolu_1") == 0);
+    CHECK(msg->tool_calls[0].name && strcmp(msg->tool_calls[0].name, "read_file") == 0);
+    CHECK(msg->tool_calls[0].arguments != NULL);
+    CHECK(msg->prompt_tokens == 10);
+    CHECK(msg->completion_tokens == 20);
+    message_free(msg);
+    OK();
+}
+
+static void test_anthropic_build_request(void) {
+    TEST("anthropic request maps tool calls/results to native blocks");
+    provider_config_t cfg = test_config(false, 0);
+    api_provider_t *api = provider_get_by_name("anthropic");
+    CHECK(api != NULL);
+    agent_t *agent = agent_create(&cfg, api);
+    free(cfg.api_key); free(cfg.base_url); free(cfg.model);
+
+    agent_set_system_prompt(agent, "system prompt");
+
+    message_t *user_msg = message_create(MSG_ROLE_USER, "hello");
+    agent_add_message(agent, user_msg);
+    message_free(user_msg);
+
+    message_t *assistant_msg = message_create(MSG_ROLE_ASSISTANT, NULL);
+    message_add_tool_call(assistant_msg, "toolu_1", "read_file",
+                          "{\"path\":\"a.c\"}");
+    agent_add_message(agent, assistant_msg);
+    message_free(assistant_msg);
+
+    message_t *tool_msg = message_create(MSG_ROLE_TOOL, NULL);
+    message_add_tool_result(tool_msg, "toolu_1", "file contents", true);
+    agent_add_message(agent, tool_msg);
+    message_free(tool_msg);
+
+    char *body = agent->api->build_request(agent);
+    CHECK(body != NULL);
+    json_value_t *root = json_parse(body);
+    CHECK(root != NULL);
+
+    json_value_t *system = root ? json_object_get(root, "system") : NULL;
+    CHECK(system && json_is_string(system) &&
+          strcmp(json_string_value(system), "system prompt") == 0);
+
+    json_value_t *msgs = root ? json_object_get(root, "messages") : NULL;
+    CHECK(msgs && json_is_array(msgs) && json_array_length(msgs) == 3);
+
+    json_value_t *assistant = json_array_get(msgs, 1);
+    json_value_t *role = assistant ? json_object_get(assistant, "role") : NULL;
+    CHECK(role && json_is_string(role) &&
+          strcmp(json_string_value(role), "assistant") == 0);
+    json_value_t *assistant_content = assistant
+        ? json_object_get(assistant, "content") : NULL;
+    CHECK(assistant_content && json_is_array(assistant_content) &&
+          json_array_length(assistant_content) == 1);
+    json_value_t *tool_use = json_array_get(assistant_content, 0);
+    json_value_t *tu_type = tool_use ? json_object_get(tool_use, "type") : NULL;
+    CHECK(tu_type && json_is_string(tu_type) &&
+          strcmp(json_string_value(tu_type), "tool_use") == 0);
+
+    json_value_t *tool = json_array_get(msgs, 2);
+    role = tool ? json_object_get(tool, "role") : NULL;
+    CHECK(role && json_is_string(role) &&
+          strcmp(json_string_value(role), "user") == 0);
+    json_value_t *tool_content = tool ? json_object_get(tool, "content") : NULL;
+    CHECK(tool_content && json_is_array(tool_content) &&
+          json_array_length(tool_content) == 1);
+    json_value_t *tool_result = json_array_get(tool_content, 0);
+    json_value_t *tr_type = tool_result
+        ? json_object_get(tool_result, "type") : NULL;
+    CHECK(tr_type && json_is_string(tr_type) &&
+          strcmp(json_string_value(tr_type), "tool_result") == 0);
+    json_value_t *is_error = tool_result
+        ? json_object_get(tool_result, "is_error") : NULL;
+    CHECK(is_error && json_is_bool(is_error) && json_bool_value(is_error));
+
+    json_free(root);
+    free(body);
+    agent_free(agent);
+    OK();
+}
+
+static void test_anthropic_parse_chunk(void) {
+    TEST("anthropic streaming chunks parse content blocks and deltas");
+    api_provider_t *api = provider_get_by_name("anthropic");
+    CHECK(api != NULL);
+
+    message_t *start = api->parse_chunk(
+        "{\"type\":\"content_block_start\",\"index\":0,"
+        "\"content_block\":{\"type\":\"tool_use\",\"id\":\"toolu_1\","
+        "\"name\":\"read_file\",\"input\":{}}}");
+    CHECK(start != NULL);
+    CHECK(start->n_tool_calls == 1);
+    CHECK(start->tool_calls[0].id &&
+          strcmp(start->tool_calls[0].id, "toolu_1") == 0);
+    CHECK(start->tool_calls[0].arguments == NULL);
+    message_free(start);
+
+    message_t *part = api->parse_chunk(
+        "{\"type\":\"content_block_delta\",\"index\":0,"
+        "\"delta\":{\"type\":\"input_json_delta\",\"partial_json\":\"{\\\"path\\\":\\\"a.c\\\"}\"}}");
+    CHECK(part != NULL);
+    CHECK(part->n_tool_calls == 1);
+    CHECK(part->tool_calls[0].arguments != NULL);
+    CHECK(strstr(part->tool_calls[0].arguments, "path") != NULL);
+    message_free(part);
+
+    message_t *text = api->parse_chunk(
+        "{\"type\":\"content_block_delta\",\"index\":1,"
+        "\"delta\":{\"type\":\"text_delta\",\"text\":\"ok\"}}");
+    CHECK(text != NULL);
+    CHECK(text->content && strcmp(text->content, "ok") == 0);
+    message_free(text);
+
+    message_t *usage = api->parse_chunk(
+        "{\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"end_turn\"},"
+        "\"usage\":{\"output_tokens\":7}}");
+    CHECK(usage != NULL);
+    CHECK(usage->completion_tokens == 7);
+    message_free(usage);
+    OK();
+}
+
 static void test_normalize_json_output(void) {
     TEST("json output normalization strips fences");
     char *out = agent_normalize_json_output("```json\n{\"a\": 1}\n```");
@@ -555,6 +741,10 @@ int main(void) {
     test_stream_interrupt();
     test_build_request_json_object();
     test_build_request_json_schema();
+    test_openai_build_request_alignment();
+    test_anthropic_parse_response();
+    test_anthropic_build_request();
+    test_anthropic_parse_chunk();
     test_normalize_json_output();
     test_json_fence_stripping_in_chat();
 

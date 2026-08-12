@@ -654,16 +654,22 @@ static message_t *agent_parse_response_body(api_provider_t *api,
                         json_value_t *raw = json_parse(json_str);
                         int tc_index = -1;
                         if (raw) {
-                            json_value_t *choices = json_object_get(raw, "choices");
-                            if (choices && json_array_length(choices) > 0) {
-                                json_value_t *c0 = json_array_get(choices, 0);
-                                json_value_t *d = json_object_get(c0, "delta");
-                                if (d) {
-                                    json_value_t *tcs = json_object_get(d, "tool_calls");
-                                    if (tcs && json_array_length(tcs) > 0) {
-                                        json_value_t *tc0 = json_array_get(tcs, 0);
-                                        json_value_t *idx = json_object_get(tc0, "index");
-                                        if (idx) tc_index = (int)json_number_value(idx);
+                            json_value_t *idx = json_object_get(raw, "index");
+                            if (idx && json_is_number(idx)) {
+                                tc_index = (int)json_number_value(idx);
+                            } else {
+                                json_value_t *choices = json_object_get(raw, "choices");
+                                if (choices && json_array_length(choices) > 0) {
+                                    json_value_t *c0 = json_array_get(choices, 0);
+                                    json_value_t *d = json_object_get(c0, "delta");
+                                    if (d) {
+                                        json_value_t *tcs = json_object_get(d, "tool_calls");
+                                        if (tcs && json_array_length(tcs) > 0) {
+                                            json_value_t *tc0 = json_array_get(tcs, 0);
+                                            json_value_t *tool_idx = json_object_get(tc0, "index");
+                                            if (tool_idx && json_is_number(tool_idx))
+                                                tc_index = (int)json_number_value(tool_idx);
+                                        }
                                     }
                                 }
                             }
@@ -1023,6 +1029,34 @@ static bool stream_sse_event(const sse_event_t *ev, void *p) {
     stream_rx_t *rx = (stream_rx_t *)p;
     if (!ev || !ev->data) return true;
     if (strcmp(ev->data, "[DONE]") == 0) return true;
+
+    /* Some providers (Anthropic) identify tool blocks with a top-level
+     * content_block index, while OpenAI-compatible providers put the index
+     * inside choices[0].delta.tool_calls[0]. Resolve it here so the generic
+     * merger can keep multiple tool calls distinct. */
+    int raw_tool_index = -1;
+    json_value_t *raw = json_parse(ev->data);
+    if (raw) {
+        json_value_t *idx = json_object_get(raw, "index");
+        if (idx && json_is_number(idx)) {
+            raw_tool_index = (int)json_number_value(idx);
+        } else {
+            json_value_t *choices = json_object_get(raw, "choices");
+            if (choices && json_array_length(choices) > 0) {
+                json_value_t *c0 = json_array_get(choices, 0);
+                json_value_t *d = json_object_get(c0, "delta");
+                json_value_t *tcs = d ? json_object_get(d, "tool_calls") : NULL;
+                if (tcs && json_array_length(tcs) > 0) {
+                    json_value_t *tc0 = json_array_get(tcs, 0);
+                    json_value_t *tool_idx = json_object_get(tc0, "index");
+                    if (tool_idx && json_is_number(tool_idx))
+                        raw_tool_index = (int)json_number_value(tool_idx);
+                }
+            }
+        }
+        json_free(raw);
+    }
+
     message_t *delta = rx->api->parse_chunk(ev->data);
     if (!delta) return true;
     if (delta->content) {
@@ -1047,7 +1081,9 @@ static bool stream_sse_event(const sse_event_t *ev, void *p) {
     if (delta->completion_tokens > 0)
         rx->accum->completion_tokens = delta->completion_tokens;
     for (int i = 0; i < delta->n_tool_calls; i++) {
-        int idx = delta->n_tool_calls > 1 ? i : 0;
+        int idx = (raw_tool_index >= 0 && delta->n_tool_calls == 1)
+                  ? raw_tool_index
+                  : (delta->n_tool_calls > 1 ? i : 0);
         bool found = false;
         for (int j = 0; j < rx->n_ptc; j++) {
             if (rx->ptc_index[j] == idx) {
