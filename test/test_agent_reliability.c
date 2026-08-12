@@ -12,10 +12,12 @@
 #include "json.h"
 #include "platform.h"
 #include "tools.h"
+#include "interrupt.h"
 
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <signal.h>
 #include <time.h>
 
 static int tests = 0, passed = 0;
@@ -369,6 +371,77 @@ static void test_parallel_tools(void) {
     OK();
 }
 
+/* ── SIGINT cancellation ────────────────────────────────────────── */
+
+static void test_interrupt_flag(void) {
+    TEST("interrupt flag set by SIGINT");
+    interrupt_init();
+    interrupt_clear();
+    CHECK(!interrupt_requested());
+    raise(SIGINT);
+    CHECK(interrupt_requested());
+    interrupt_clear();
+    CHECK(!interrupt_requested());
+    OK();
+}
+
+static void test_exec_interrupt(void) {
+    TEST("command execution aborts on SIGINT");
+    interrupt_init();
+    interrupt_clear();
+    raise(SIGINT);   /* simulate Ctrl-C */
+
+    int ec = 0;
+    char *out = os_exec_capture_timeout("sleep 5", 5000, &ec);
+    CHECK(out != NULL);
+    CHECK(ec == 130);
+    CHECK(strstr(out, "interrupted") != NULL);
+    free(out);
+    interrupt_clear();
+    OK();
+}
+
+static void test_agent_interrupt(void) {
+    TEST("agent_chat returns NULL on SIGINT");
+    http_mock_enable();
+    push_response_with_usage("should not run", 1, 1);
+
+    provider_config_t cfg = test_config(false, 0);
+    agent_t *agent = agent_create(&cfg, g_api);
+    free(cfg.api_key); free(cfg.base_url); free(cfg.model);
+
+    interrupt_init();
+    interrupt_clear();
+    raise(SIGINT);
+    message_t *resp = agent_chat(agent, "hi");
+    CHECK(resp == NULL);
+
+    interrupt_clear();
+    agent_free(agent);
+    http_mock_clear();
+    OK();
+}
+
+static void test_stream_interrupt(void) {
+    TEST("agent_chat_stream returns NULL on SIGINT");
+    http_mock_enable();
+    push_stream_with_usage("should not run", 1, 1);
+
+    provider_config_t cfg = test_config(true, 0);
+    agent_t *agent = agent_create(&cfg, g_api);
+    free(cfg.api_key); free(cfg.base_url); free(cfg.model);
+
+    interrupt_clear();
+    raise(SIGINT);
+    message_t *resp = agent_chat_stream(agent, "hi", NULL, NULL);
+    CHECK(resp == NULL);
+
+    interrupt_clear();
+    agent_free(agent);
+    http_mock_clear();
+    OK();
+}
+
 int main(void) {
     printf("Agent reliability tests:\n");
     provider_init();
@@ -388,6 +461,10 @@ int main(void) {
     test_auto_compact();
     test_auto_compact_trim_fallback();
     test_parallel_tools();
+    test_interrupt_flag();
+    test_exec_interrupt();
+    test_agent_interrupt();
+    test_stream_interrupt();
 
     http_mock_disable();
     http_cleanup();

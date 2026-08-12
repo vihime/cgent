@@ -382,6 +382,20 @@ results are appended in call order regardless of completion order.
 Configure per model in `settings.json` (`"parallel_tools": true`, the
 default) or disable at runtime with `--no-parallel-tools`.
 
+### Graceful Ctrl-C Cancellation
+
+`Ctrl-C` no longer kills cgent. A SIGINT handler sets a cancellation flag
+that the request loops check:
+
+- During streaming, the current generation is aborted (partial output is
+  discarded) and the REPL returns to the prompt — the session stays
+  usable.
+- During command execution, the running command is killed and the tool
+  reports `(command interrupted)`.
+- At the input prompt, `Ctrl-C` clears the current line.
+- In single-shot `-q` mode, the request is cancelled and cgent exits
+  with status 130.
+
 ### Task Planning (Todos)
 
 For multi-step tasks the agent can lay out an explicit plan with

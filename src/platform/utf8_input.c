@@ -9,6 +9,7 @@
  * Zero external dependencies — uses POSIX termios + langinfo.
  */
 #include "platform.h"
+#include "interrupt.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -229,6 +230,15 @@ char *utf8_readline(const char *prompt) {
                 wwrite("\n", 1);
                 term_raw_disable();
                 return NULL;
+            }
+            /* Ctrl-C: clear the current input line and redraw the prompt */
+            if (interrupt_requested()) {
+                interrupt_clear();
+                len = 0;
+                cursor = 0;
+                buf[0] = '\0';
+                wwrite("\r\n", 2);
+                if (prompt) wwrite(prompt, strlen(prompt));
             }
             continue;
         }

@@ -10,6 +10,7 @@
 #include "mcp.h"
 #include "skills.h"
 #include "todo.h"
+#include "interrupt.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -216,6 +217,9 @@ static bool prompt_confirm(const char *question, void *ctx) {
 int main(int argc, char **argv) {
     /* Initialize locale from environment for proper UTF-8/GBK handling */
     setlocale(LC_ALL, "");
+    /* Graceful Ctrl-C: cancel the current operation instead of exiting */
+    interrupt_init();
+    interrupt_clear();
 
     /* ── Subagent mode ──────────────────────────────────────────── */
     for (int i = 1; i < argc; i++) {
@@ -489,6 +493,7 @@ int main(int argc, char **argv) {
     int last_requests = 0, last_retries = 0;
 
     if (args.query) {
+        interrupt_clear();
         /* ── Single-shot mode ──────────────────────────────────── */
         /* Add user input to session */
         message_t qmsg = { .role = MSG_ROLE_USER, .content = strdup(args.query) };
@@ -515,6 +520,10 @@ int main(int argc, char **argv) {
         print_usage_line(session);
         /* Save session */
         session_save(session, cfg);
+        if (interrupt_requested()) {
+            printf("\n[interrupted]\n");
+            rc = 130;
+        }
     } else {
         /* ── Interactive REPL mode ─────────────────────────────── */
         print_version();
@@ -522,6 +531,7 @@ int main(int argc, char **argv) {
         printf("Type /help for commands, /quit to exit, Ctrl-D to end.\n\n");
 
         while (1) {
+            interrupt_clear();
             char *line = utf8_readline("> ");
             if (!line) {
                 printf("\n");
@@ -695,6 +705,9 @@ int main(int argc, char **argv) {
                                    before_tokens > 0
                                        ? 100.0 * (before_tokens - after_tokens) / before_tokens
                                        : 0.0);
+                        } else if (interrupt_requested()) {
+                            printf("Compaction interrupted.\n");
+                            interrupt_clear();
                         } else {
                             printf("Error: Compaction returned no content. "
                                    "Conversation has been cleared.\n");
@@ -834,6 +847,11 @@ int main(int argc, char **argv) {
                         session_add_message(session, resp);
                         message_free(resp);
                     }
+                }
+                if (interrupt_requested()) {
+                    printf("[interrupted]\n");
+                    fflush(stdout);
+                    interrupt_clear();
                 }
                 session_track_usage(session, agent, &last_prompt, &last_completion,
                                     &last_requests, &last_retries);

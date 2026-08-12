@@ -5,7 +5,8 @@ include config.mk
 
 # ── Source files ──────────────────────────────────────────────────
 
-CORE_SRCS   = src/core/agent.c src/core/message.c src/core/streaming.c
+CORE_SRCS   = src/core/agent.c src/core/message.c src/core/streaming.c \
+              src/core/interrupt.c
 NET_SRCS    = src/network/http_client.c src/network/sse_reader.c \
               src/network/http_mock.c
 PROTO_SRCS  = src/protocol/provider.c src/protocol/deepseek.c \

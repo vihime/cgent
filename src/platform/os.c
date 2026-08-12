@@ -2,6 +2,7 @@
  * os.c — Platform abstraction implementation (Linux primary)
  */
 #include "platform.h"
+#include "interrupt.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -223,10 +224,12 @@ char *os_exec_capture_timeout(const char *command, int timeout_ms, int *exit_cod
     size_t len = 0;
     bool timed_out = false;
     bool truncated = false;
+    bool interrupted = false;
     int64_t start = os_time_ms();
     int status = 0;
 
     while (1) {
+        if (interrupt_requested()) { interrupted = true; break; }
         int remaining = timeout_ms > 0
             ? timeout_ms - (int)(os_time_ms() - start) : 1000;
         if (remaining <= 0) { timed_out = true; break; }
@@ -235,7 +238,10 @@ char *os_exec_capture_timeout(const char *command, int timeout_ms, int *exit_cod
         struct pollfd pfd = { .fd = pipefd[0], .events = POLLIN };
         int pr = poll(&pfd, 1, remaining);
         if (pr < 0) {
-            if (errno == EINTR) continue;
+            if (errno == EINTR) {
+                if (interrupt_requested()) { interrupted = true; break; }
+                continue;
+            }
             break;
         }
         if (pr == 0) { timed_out = true; break; }
@@ -244,7 +250,10 @@ char *os_exec_capture_timeout(const char *command, int timeout_ms, int *exit_cod
 
         ssize_t n = read(pipefd[0], buf + len, OS_EXEC_CAP - len);
         if (n < 0) {
-            if (errno == EINTR) continue;
+            if (errno == EINTR) {
+                if (interrupt_requested()) { interrupted = true; break; }
+                continue;
+            }
             break;
         }
         if (n == 0) break; /* EOF */
@@ -254,12 +263,17 @@ char *os_exec_capture_timeout(const char *command, int timeout_ms, int *exit_cod
     buf[len] = '\0';
     close(pipefd[0]);
 
-    if (timed_out || truncated) {
+    if (timed_out || truncated || interrupted) {
         /* Kill the command tree and don't wait for it to finish. */
         kill(-pid, SIGKILL);
         waitpid(pid, &status, 0);
-        if (exit_code) *exit_code = timed_out ? 124 : -1;
-        if (timed_out) {
+        if (exit_code) *exit_code = timed_out ? 124 : (interrupted ? 130 : -1);
+        if (interrupted) {
+            int olen = snprintf(buf + len, 256,
+                "\n... (command interrupted)\n");
+            len += olen > 0 ? (size_t)olen : 0;
+            buf[len] = '\0';
+        } else if (timed_out) {
             int olen = snprintf(buf + len, 256,
                 "\n... (command timed out after %d ms)\n", timeout_ms);
             len += olen > 0 ? (size_t)olen : 0;

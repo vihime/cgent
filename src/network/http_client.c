@@ -9,6 +9,7 @@
 #include "network.h"
 #include "platform.h"
 #include "http_mock.h"
+#include "interrupt.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -135,6 +136,10 @@ static tls_conn_t *tls_connect(const char *host, int port, bool use_tls) {
     for (struct addrinfo *rp = result; rp; rp = rp->ai_next) {
         sockfd = socket(rp->ai_family, rp->ai_socktype, rp->ai_protocol);
         if (sockfd < 0) continue;
+        /* Short receive timeout: lets blocking reads return periodically
+         * so SIGINT cancellation can be noticed. */
+        struct timeval tv = { .tv_sec = 0, .tv_usec = 200000 };
+        setsockopt(sockfd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
         if (connect(sockfd, rp->ai_addr, rp->ai_addrlen) == 0) break;
         close(sockfd);
         sockfd = -1;
@@ -317,6 +322,12 @@ http_response_t *http_request(const http_request_t *req) {
     {
         tls_conn_t *conn = tls_connect(url->host, url->port, is_https);
         if (!conn) { url_free(url); free(resp); return NULL; }
+        if (interrupt_requested()) {
+            tls_close(conn);
+            url_free(url);
+            free(resp);
+            return NULL;
+        }
 
         /* Build and send request */
         size_t req_len;
@@ -458,6 +469,12 @@ http_response_t *http_request_stream(const http_request_t *req,
     {
         tls_conn_t *conn = tls_connect(url->host, url->port, is_https);
         if (!conn) { url_free(url); free(resp); return NULL; }
+        if (interrupt_requested()) {
+            tls_close(conn);
+            url_free(url);
+            free(resp);
+            return NULL;
+        }
 
         size_t req_len;
         char *req_buf = build_http_request(req, &req_len);
@@ -482,6 +499,7 @@ http_response_t *http_request_stream(const http_request_t *req,
         size_t content_length = 0;
 
         while (1) {
+            if (interrupt_requested()) break;
             char *hdr = tls_read_line(conn);
             if (!hdr || *hdr == '\0') { free(hdr); break; }
             if (resp->header_count >= hdr_cap) {
@@ -498,6 +516,7 @@ http_response_t *http_request_stream(const http_request_t *req,
         /* Read body in chunks and call callback */
         if (chunked) {
             while (1) {
+                if (interrupt_requested()) break;
                 char *chunk_line = tls_read_line(conn);
                 if (!chunk_line) break;
                 long chunk_size = strtol(chunk_line, NULL, 16);
@@ -520,6 +539,7 @@ http_response_t *http_request_stream(const http_request_t *req,
         } else if (content_length > 0) {
             size_t remaining = content_length;
             while (remaining > 0) {
+                if (interrupt_requested()) break;
                 size_t to_read = remaining < 4096 ? remaining : 4096;
                 char *chunk = tls_read_n(conn, to_read);
                 if (!chunk) break;
@@ -530,6 +550,7 @@ http_response_t *http_request_stream(const http_request_t *req,
         } else {
             /* Read until close */
             while (1) {
+                if (interrupt_requested()) break;
                 char chunk[4096];
                 int n = SSL_read(conn->ssl, chunk, sizeof(chunk));
                 if (n <= 0) break;

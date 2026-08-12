@@ -13,6 +13,7 @@
 #include "protocol.h"
 #include "network.h"
 #include "tools.h"
+#include "interrupt.h"
 
 #include <pthread.h>
 #include <unistd.h>
@@ -347,6 +348,7 @@ static int agent_execute_tools(agent_t *agent, message_t *assistant_msg) {
     int launched = 0;
     if (parallel) {
         for (int i = 0; i < n && launched < 32; i++) {
+            if (interrupt_requested()) break;
             tool_t *tool = tool_registry_find(assistant_msg->tool_calls[i].name);
             if (tool && !tool->thread_safe) continue;
             if (pthread_create(&jobs[i].thread, NULL, tool_job_run,
@@ -365,6 +367,10 @@ static int agent_execute_tools(agent_t *agent, message_t *assistant_msg) {
     /* Run non-thread-safe tools sequentially in the calling thread */
     for (int i = 0; i < n; i++) {
         if (jobs[i].thread_started) continue;
+        if (interrupt_requested()) {
+            if (!jobs[i].error) jobs[i].error = strdup("interrupted by user");
+            continue;
+        }
         tool_t *tool = tool_registry_find(assistant_msg->tool_calls[i].name);
         bool can_parallel = tool && tool->thread_safe;
         if (parallel && can_parallel) continue; /* already handled */
@@ -808,6 +814,7 @@ message_t *agent_chat(agent_t *agent, const char *user_input) {
         int attempt = 0;
 
         while (1) {
+            if (interrupt_requested()) break;
             resp = http_request(&req);
             if (resp && resp->status_code >= 200 && resp->status_code < 300)
                 break;
@@ -837,6 +844,10 @@ message_t *agent_chat(agent_t *agent, const char *user_input) {
         if (!resp) {
             fprintf(stderr, "[agent] HTTP request failed%s\n",
                     attempt > 0 ? " after retries" : "");
+            break;
+        }
+        if (interrupt_requested()) {
+            http_response_free(resp);
             break;
         }
 
@@ -928,6 +939,11 @@ message_t *agent_chat(agent_t *agent, const char *user_input) {
 
     if (max_rounds <= 0) {
         fprintf(stderr, "[agent] Max tool-use rounds exceeded\n");
+    }
+
+    if (interrupt_requested()) {
+        if (final_response) message_free(final_response);
+        return NULL;
     }
 
     if (!final_response) {
@@ -1085,6 +1101,7 @@ message_t *agent_chat_stream(agent_t *agent, const char *user_input,
             assistant_msg = NULL;
 
             while (1) {
+                if (interrupt_requested()) break;
                 stream_rx_t rx = {0};
                 rx.parser = sse_parser_create();
                 rx.accum = message_create(MSG_ROLE_ASSISTANT, NULL);
@@ -1102,6 +1119,16 @@ message_t *agent_chat_stream(agent_t *agent, const char *user_input,
                 int code = resp ? resp->status_code : 0;
                 bool ok = resp && code >= 200 && code < 300;
                 if (!ok) {
+                    if (interrupt_requested()) {
+                        message_free(rx.accum);
+                        sse_parser_free(rx.parser);
+                        for (int i = 0; i < rx.n_ptc; i++) {
+                            free(rx.ptc_id[i]); free(rx.ptc_name[i]);
+                            free(rx.ptc_args[i]);
+                        }
+                        if (resp) http_response_free(resp);
+                        break;
+                    }
                     /* Only retry before any output was emitted — retrying a
                      * partially-streamed response would duplicate output. */
                     bool emitted = rx.text_len > 0 || rx.reasoning_len > 0
@@ -1169,6 +1196,7 @@ message_t *agent_chat_stream(agent_t *agent, const char *user_input,
             int attempt = 0;
 
             while (1) {
+                if (interrupt_requested()) break;
                 resp = http_request(&req);
                 if (resp && resp->status_code >= 200 && resp->status_code < 300)
                     break;
@@ -1188,6 +1216,10 @@ message_t *agent_chat_stream(agent_t *agent, const char *user_input,
             }
 
             if (!resp || resp->status_code < 200 || resp->status_code >= 300) {
+                if (interrupt_requested()) {
+                    if (resp) http_response_free(resp);
+                    assistant_msg = NULL;
+                } else
                 if (resp) {
                     fprintf(stderr, "[agent] API error (HTTP %d): %s\n",
                             resp->status_code, resp->body ? resp->body : "");
@@ -1253,6 +1285,7 @@ message_t *agent_chat_stream(agent_t *agent, const char *user_input,
     }
 
     if (!final_response) {
+        if (interrupt_requested()) return NULL;
         final_response = message_create(MSG_ROLE_ASSISTANT,
             "Error: Failed to get a response from the API.");
     }

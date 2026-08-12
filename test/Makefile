@@ -9,6 +9,7 @@ SRC_DIR  = ../src
 PROJ_SRCS = $(SRC_DIR)/core/message.c \
             $(SRC_DIR)/core/streaming.c \
             $(SRC_DIR)/core/agent.c \
+            $(SRC_DIR)/core/interrupt.c \
             $(SRC_DIR)/network/http_client.c \
             $(SRC_DIR)/network/sse_reader.c \
             $(SRC_DIR)/network/http_mock.c \
