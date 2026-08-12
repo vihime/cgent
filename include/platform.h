@@ -69,6 +69,12 @@ int os_mkdir_p(const char *path);
    Sets *exit_code to the command's exit status. */
 char *os_exec_capture(const char *command, int *exit_code);
 
+/* Execute a command and capture stdout with a timeout and output cap.
+ * On timeout the process tree is killed and the returned output ends
+ * with a "(command timed out)" marker; on truncation the output ends
+ * with a "(output truncated)" marker. Returns malloc'd string or NULL. */
+char *os_exec_capture_timeout(const char *command, int timeout_ms, int *exit_code);
+
 /* ── Time ───────────────────────────────────────────────────────── */
 
 /* Get monotonic timestamp in milliseconds */

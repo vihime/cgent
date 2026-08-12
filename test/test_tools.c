@@ -3,9 +3,11 @@
  */
 #include "tools.h"
 #include "json.h"
+#include "platform.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/stat.h>
 #include <unistd.h>
 
 static int tests = 0, passed = 0;
@@ -159,6 +161,202 @@ static void test_grep_tool(void) {
     OK();
 }
 
+static void test_bash_timeout(void) {
+    TEST("exec timeout");
+    int ec = 0;
+    int64_t t0 = os_time_ms();
+    char *out = os_exec_capture_timeout("sleep 5", 500, &ec);
+    int64_t dt = os_time_ms() - t0;
+    CHECK(out != NULL);
+    CHECK(ec == 124);
+    CHECK(strstr(out, "timed out") != NULL);
+    CHECK(dt < 3000); /* must not wait for the full sleep */
+    free(out);
+    OK();
+}
+
+static void test_shell_quoting(void) {
+    TEST("tool args shell-quoted (no injection)");
+    unlink("/tmp/cgent_pwned");
+    char *error = NULL;
+    char *result = tool_execute("grep",
+        "{\"pattern\":\"'; touch /tmp/cgent_pwned; '\",\"include\":\"*.c\"}",
+        5000, &error);
+    CHECK(result != NULL);
+    CHECK(access("/tmp/cgent_pwned", F_OK) != 0); /* must not exist */
+    free(result);
+    if (error) free(error);
+    OK();
+}
+
+static void test_list_dir_tool(void) {
+    TEST("list_dir tool");
+    mkdir("/tmp/cgent_ls_test", 0755);
+    FILE *fp = fopen("/tmp/cgent_ls_test/a.txt", "w");
+    if (fp) { fputs("x", fp); fclose(fp); }
+    mkdir("/tmp/cgent_ls_test/sub", 0755);
+
+    char *error = NULL;
+    char *result = tool_execute("list_dir",
+        "{\"path\":\"/tmp/cgent_ls_test\"}", 5000, &error);
+    CHECK(result != NULL);
+    CHECK(strstr(result, "a.txt") != NULL);
+    CHECK(strstr(result, "sub") != NULL);
+    json_value_t *parsed = json_parse(result);
+    CHECK(parsed != NULL);
+    CHECK(json_number_value(json_object_get(parsed, "count")) >= 2.0);
+    json_free(parsed);
+    free(result);
+
+    unlink("/tmp/cgent_ls_test/a.txt");
+    rmdir("/tmp/cgent_ls_test/sub");
+    rmdir("/tmp/cgent_ls_test");
+    OK();
+}
+
+static void test_apply_patch_update(void) {
+    TEST("apply_patch update");
+    FILE *fp = fopen("/tmp/cgent_patch_test.txt", "w");
+    if (fp) {
+        fprintf(fp, "line one\nline two\nline three\n");
+        fclose(fp);
+    }
+
+    char *error = NULL;
+    char *result = tool_execute("apply_patch",
+        "{\"patch\":\"--- /tmp/cgent_patch_test.txt\\n"
+        "+++ /tmp/cgent_patch_test.txt\\n"
+        "@@ -1,3 +1,3 @@\\n"
+        " line one\\n"
+        "-line two\\n"
+        "+line TWO\\n"
+        " line three\\n\"}",
+        5000, &error);
+    CHECK(result != NULL);
+    CHECK(strstr(result, "\"success\":true") != NULL);
+
+    fp = fopen("/tmp/cgent_patch_test.txt", "r");
+    CHECK(fp != NULL);
+    char buf[256] = {0};
+    if (fp) {
+        fread(buf, 1, sizeof(buf) - 1, fp);
+        fclose(fp);
+    }
+    CHECK(strstr(buf, "line TWO") != NULL);
+    CHECK(strstr(buf, "line two") == NULL);
+    CHECK(strstr(buf, "line one") != NULL);
+
+    free(result);
+    unlink("/tmp/cgent_patch_test.txt");
+    OK();
+}
+
+static void test_apply_patch_add_delete(void) {
+    TEST("apply_patch add + delete");
+    char *error = NULL;
+
+    char *result = tool_execute("apply_patch",
+        "{\"patch\":\"--- /dev/null\\n"
+        "+++ /tmp/cgent_patch_new.txt\\n"
+        "@@ -0,0 +1,2 @@\\n"
+        "+hello\\n"
+        "+world\\n\"}",
+        5000, &error);
+    CHECK(result != NULL);
+    CHECK(strstr(result, "\"success\":true") != NULL);
+    CHECK(access("/tmp/cgent_patch_new.txt", F_OK) == 0);
+    free(result);
+
+    result = tool_execute("apply_patch",
+        "{\"patch\":\"--- /tmp/cgent_patch_new.txt\\n"
+        "+++ /dev/null\\n"
+        "@@ -1,2 +0,0 @@\\n"
+        "-hello\\n"
+        "-world\\n\"}",
+        5000, &error);
+    CHECK(result != NULL);
+    CHECK(strstr(result, "\"success\":true") != NULL);
+    CHECK(access("/tmp/cgent_patch_new.txt", F_OK) != 0);
+    free(result);
+    if (error) free(error);
+    OK();
+}
+
+static void test_apply_patch_mismatch(void) {
+    TEST("apply_patch context mismatch fails cleanly");
+    FILE *fp = fopen("/tmp/cgent_patch_mismatch.txt", "w");
+    if (fp) {
+        fprintf(fp, "aaa\nbbb\n");
+        fclose(fp);
+    }
+
+    char *error = NULL;
+    char *result = tool_execute("apply_patch",
+        "{\"patch\":\"--- /tmp/cgent_patch_mismatch.txt\\n"
+        "+++ /tmp/cgent_patch_mismatch.txt\\n"
+        "@@ -1,2 +1,2 @@\\n"
+        " xxx\\n"
+        "-yyy\\n"
+        "+zzz\\n\"}",
+        5000, &error);
+    CHECK(result != NULL);
+    json_value_t *parsed = json_parse(result);
+    CHECK(parsed != NULL);
+    json_value_t *succ = parsed ? json_object_get(parsed, "success") : NULL;
+    CHECK(succ != NULL && json_is_bool(succ));
+    CHECK(succ && json_bool_value(succ) == false);
+    json_free(parsed);
+    free(result);
+    if (error) free(error);
+    unlink("/tmp/cgent_patch_mismatch.txt");
+    OK();
+}
+
+static void test_git_tools(void) {
+    TEST("git_status / git_diff / git_log");
+    char old_cwd[4096];
+    if (!getcwd(old_cwd, sizeof(old_cwd))) strcpy(old_cwd, ".");
+
+    system("rm -rf /tmp/cgent_git_test && mkdir -p /tmp/cgent_git_test");
+    if (chdir("/tmp/cgent_git_test") != 0) {
+        FAIL("cannot chdir to test repo");
+        return;
+    }
+    system("git init -q && git config user.email test@cgent && git config user.name cgent-test");
+    FILE *fp = fopen("f.txt", "w");
+    if (fp) { fprintf(fp, "v1\n"); fclose(fp); }
+    system("git add f.txt && git commit -qm first");
+    fp = fopen("f.txt", "w");
+    if (fp) { fprintf(fp, "v2\n"); fclose(fp); }
+
+    char *error = NULL;
+    char *result = tool_execute("git_status", "{}", 5000, &error);
+    CHECK(result != NULL);
+    json_value_t *parsed = json_parse(result);
+    CHECK(parsed != NULL);
+    json_value_t *ok = parsed ? json_object_get(parsed, "success") : NULL;
+    CHECK(ok && json_is_bool(ok) && json_bool_value(ok));
+    CHECK(parsed && json_number_value(json_object_get(parsed, "count")) >= 1.0);
+    CHECK(strstr(result, "f.txt") != NULL);
+    json_free(parsed);
+    free(result);
+
+    result = tool_execute("git_diff", "{}", 5000, &error);
+    CHECK(result != NULL);
+    CHECK(strstr(result, "v2") != NULL || strstr(result, "-v1") != NULL);
+    free(result);
+
+    result = tool_execute("git_log", "{\"n\":5}", 5000, &error);
+    CHECK(result != NULL);
+    CHECK(strstr(result, "first") != NULL);
+    free(result);
+    if (error) free(error);
+
+    chdir(old_cwd);
+    system("rm -rf /tmp/cgent_git_test");
+    OK();
+}
+
 static void test_tool_not_found(void) {
     TEST("tool not found");
     char *error = NULL;
@@ -180,6 +378,13 @@ int main(void) {
     test_edit_tool();
     test_glob_tool();
     test_grep_tool();
+    test_bash_timeout();
+    test_shell_quoting();
+    test_list_dir_tool();
+    test_apply_patch_update();
+    test_apply_patch_add_delete();
+    test_apply_patch_mismatch();
+    test_git_tools();
     test_tool_not_found();
     printf("  %d/%d passed\n", passed, tests);
     return passed == tests ? 0 : 1;

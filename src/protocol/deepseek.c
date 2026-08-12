@@ -80,6 +80,11 @@ static char *deepseek_build_request(const agent_t *agent) {
                 json_object_set(m, "content", json_string(msg->content));
             else if (msg->n_tool_calls > 0)
                 json_object_set(m, "content", json_null());
+            /* Reasoning content — required by DeepSeek thinking mode when
+             * continuing a conversation (must be passed back verbatim). */
+            if (msg->reasoning_content && msg->reasoning_content[0])
+                json_object_set(m, "reasoning_content",
+                    json_string(msg->reasoning_content));
             /* Tool calls */
             if (msg->n_tool_calls > 0) {
                 json_value_t *tcs = json_array();

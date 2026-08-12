@@ -771,6 +771,13 @@ message_t *agent_chat_stream(agent_t *agent, const char *user_input,
                         assistant_msg->n_tool_calls);
             }
 
+            /* Streamed output doesn't include a trailing newline — end the
+             * line so tool execution / the next round starts on a fresh line. */
+            if (on_token && assistant_msg->content && assistant_msg->content[0]
+                && assistant_msg->content[strlen(assistant_msg->content) - 1] != '\n') {
+                on_token("\n", ctx);
+            }
+
             /* Add assistant message once before tool results */
             agent_add_message(agent, assistant_msg);
 

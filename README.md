@@ -216,6 +216,11 @@ Examples:
 | `think` | Record a thought (chain-of-thought) |
 | `glob` | Find files matching a glob pattern |
 | `grep` | Search for text patterns in files |
+| `list_dir` | List directory entries with type and size |
+| `apply_patch` | Apply a unified diff patch (add/edit/delete files) |
+| `git_status` | Show git branch and changed files |
+| `git_diff` | Show git diff (staged, stat, or path-filtered) |
+| `git_log` | Show recent git commit history |
 | `web_fetch` | Fetch content from a URL |
 | `web_search` | Perform a web search |
 | `send_message` | Send a message to the mailbox |
@@ -298,7 +303,7 @@ make -C test test-integration                  # 8 integration tests (needs API 
 CGENT_API_KEY=sk-xxx make -C test test-subagent     # 3 subagent tests
 ```
 
-Tests cover: JSON parsing, message lifecycle, config/AGENTS.md parsing, tool registry, tool execution (read_file, write_file, edit, bash, think, glob, grep), memory leak stress (1000+ iterations), mock HTTP backend, multi-turn chat, code generation, and subagent spawning.
+Tests cover: JSON parsing, message lifecycle, config/AGENTS.md parsing, tool registry, tool execution (read_file, write_file, edit, bash, think, glob, grep, list_dir, apply_patch, git_status, git_diff, git_log), exec timeout/truncation, shell-argument escaping, memory leak stress (1000+ iterations), mock HTTP backend, multi-turn chat, code generation, and subagent spawning.
 
 ## Contributing
 

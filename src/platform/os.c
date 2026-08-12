@@ -8,6 +8,9 @@
 #include <string.h>
 #include <sys/stat.h>
 #include <sys/time.h>
+#include <sys/wait.h>
+#include <poll.h>
+#include <signal.h>
 #include <time.h>
 #include <unistd.h>
 #include <errno.h>
@@ -169,7 +172,135 @@ int os_mkdir_p(const char *path) {
 
 /* ── Process ────────────────────────────────────────────────────── */
 
+#ifndef PLATFORM_WINDOWS
+
+/* Maximum bytes captured from a single command (protects the model
+ * context from unbounded tool output). */
+#define OS_EXEC_CAP (128 * 1024)
+
+char *os_exec_capture_timeout(const char *command, int timeout_ms, int *exit_code) {
+    if (!command) {
+        if (exit_code) *exit_code = -1;
+        return NULL;
+    }
+
+    int pipefd[2];
+    if (pipe(pipefd) != 0) {
+        if (exit_code) *exit_code = -1;
+        return NULL;
+    }
+
+    pid_t pid = fork();
+    if (pid < 0) {
+        close(pipefd[0]);
+        close(pipefd[1]);
+        if (exit_code) *exit_code = -1;
+        return NULL;
+    }
+
+    if (pid == 0) {
+        /* Child: own process group so the parent can kill the whole
+         * command tree on timeout/truncation. */
+        setpgid(0, 0);
+        close(pipefd[0]);
+        dup2(pipefd[1], STDOUT_FILENO);
+        close(pipefd[1]);
+        execl("/bin/sh", "sh", "-c", command, (char *)NULL);
+        _exit(127);
+    }
+
+    close(pipefd[1]);
+
+    char *buf = malloc(OS_EXEC_CAP + 512);
+    if (!buf) {
+        kill(-pid, SIGKILL);
+        waitpid(pid, NULL, 0);
+        close(pipefd[0]);
+        if (exit_code) *exit_code = -1;
+        return NULL;
+    }
+
+    size_t len = 0;
+    bool timed_out = false;
+    bool truncated = false;
+    int64_t start = os_time_ms();
+    int status = 0;
+
+    while (1) {
+        int remaining = timeout_ms > 0
+            ? timeout_ms - (int)(os_time_ms() - start) : 1000;
+        if (remaining <= 0) { timed_out = true; break; }
+        if (remaining > 1000) remaining = 1000;
+
+        struct pollfd pfd = { .fd = pipefd[0], .events = POLLIN };
+        int pr = poll(&pfd, 1, remaining);
+        if (pr < 0) {
+            if (errno == EINTR) continue;
+            break;
+        }
+        if (pr == 0) { timed_out = true; break; }
+
+        if (len >= OS_EXEC_CAP) { truncated = true; break; }
+
+        ssize_t n = read(pipefd[0], buf + len, OS_EXEC_CAP - len);
+        if (n < 0) {
+            if (errno == EINTR) continue;
+            break;
+        }
+        if (n == 0) break; /* EOF */
+        len += (size_t)n;
+    }
+
+    buf[len] = '\0';
+    close(pipefd[0]);
+
+    if (timed_out || truncated) {
+        /* Kill the command tree and don't wait for it to finish. */
+        kill(-pid, SIGKILL);
+        waitpid(pid, &status, 0);
+        if (exit_code) *exit_code = timed_out ? 124 : -1;
+        if (timed_out) {
+            int olen = snprintf(buf + len, 256,
+                "\n... (command timed out after %d ms)\n", timeout_ms);
+            len += olen > 0 ? (size_t)olen : 0;
+            buf[len] = '\0';
+        } else {
+            int olen = snprintf(buf + len, 256,
+                "\n... (output truncated at %d bytes)\n", OS_EXEC_CAP);
+            len += olen > 0 ? (size_t)olen : 0;
+            buf[len] = '\0';
+        }
+        return buf;
+    }
+
+    /* Reap the child. If it is still alive after closing stdout, wait
+     * briefly and kill it rather than blocking forever. */
+    int waited = 0;
+    while (waitpid(pid, &status, WNOHANG) == 0) {
+        if (timeout_ms > 0 && waited >= timeout_ms) {
+            kill(-pid, SIGKILL);
+            waitpid(pid, &status, 0);
+            if (exit_code) *exit_code = 124;
+            return buf;
+        }
+        usleep(50000);
+        waited += 50;
+    }
+
+    if (exit_code) {
+#ifdef PLATFORM_WINDOWS
+        *exit_code = status;
+#else
+        *exit_code = WIFEXITED(status) ? WEXITSTATUS(status) : -1;
+#endif
+    }
+    return buf;
+}
+
+#endif /* !PLATFORM_WINDOWS */
+
 char *os_exec_capture(const char *command, int *exit_code) {
+#ifdef PLATFORM_WINDOWS
     FILE *fp = popen(command, "r");
     if (!fp) {
         if (exit_code) *exit_code = -1;
@@ -213,6 +344,9 @@ char *os_exec_capture(const char *command, int *exit_code) {
     }
 
     return buf;
+#else
+    return os_exec_capture_timeout(command, 60000, exit_code);
+#endif
 }
 
 /* ── Time ───────────────────────────────────────────────────────── */
