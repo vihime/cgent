@@ -39,6 +39,8 @@ cli_args_t cli_parse(int argc, char **argv) {
         {"retries",     required_argument, 0, 1002},
         {"no-auto-compact", no_argument,   0, 1003},
         {"no-parallel-tools", no_argument, 0, 1004},
+        {"json",            no_argument,   0, 1005},
+        {"json-schema",     required_argument, 0, 1006},
         {"yes",             no_argument,   0, 'y'},
         {"no-stream",   no_argument,       0, 'n'},
         {"config",      required_argument, 0, 'c'},
@@ -66,6 +68,8 @@ cli_args_t cli_parse(int argc, char **argv) {
         case 1002: args.retries    = atoi(optarg); break;
         case 1003: args.no_auto_compact = true; break;
         case 1004: args.no_parallel_tools = true; break;
+        case 1005: args.json_mode = true; break;
+        case 1006: args.json_schema_path = optarg; break;
         case 'y': args.yes = true; break;
         case 'n': args.stream      = false; break;
         case 'c': args.config_path = optarg; break;

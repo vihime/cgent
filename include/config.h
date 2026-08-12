@@ -44,6 +44,8 @@ typedef struct {
     bool auto_compact;       /* Auto-compact when context is nearly full */
     double compact_ratio;    /* Fraction of context that triggers compaction */
     bool parallel_tools;     /* Execute independent tool calls in parallel */
+    char *response_format;   /* "json_object" / "json_schema" or NULL */
+    char *json_schema;       /* Inline JSON schema for json_schema mode */
 } model_entry_t;
 
 /* ── Runtime configuration ──────────────────────────────────────── */
@@ -72,6 +74,8 @@ typedef struct {
     bool auto_compact;
     double compact_ratio;
     bool parallel_tools;
+    char *response_format;
+    char *json_schema;
 
     /* Agent settings */
     char *agent_dir;
@@ -146,6 +150,8 @@ typedef struct {
     bool no_auto_compact;       /* --no-auto-compact */
     bool no_parallel_tools;     /* --no-parallel-tools */
     bool yes;                   /* -y/--yes: skip approval prompts */
+    bool json_mode;             /* --json: request JSON object output */
+    char *json_schema_path;     /* --json-schema <file>: schema file */
     bool verbose;
     bool help;
     bool version;

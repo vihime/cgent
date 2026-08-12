@@ -442,6 +442,94 @@ static void test_stream_interrupt(void) {
     OK();
 }
 
+/* ── Structured output ──────────────────────────────────────────── */
+
+static void test_build_request_json_object(void) {
+    TEST("request includes response_format json_object");
+    provider_config_t cfg = test_config(false, 0);
+    cfg.response_format = strdup("json_object");
+    agent_t *agent = agent_create(&cfg, g_api);
+    free(cfg.api_key); free(cfg.base_url); free(cfg.model); free(cfg.response_format);
+
+    char *body = agent->api->build_request(agent);
+    CHECK(body != NULL);
+    json_value_t *root = json_parse(body);
+    CHECK(root != NULL);
+    json_value_t *rf = root ? json_object_get(root, "response_format") : NULL;
+    CHECK(rf != NULL && json_is_object(rf));
+    json_value_t *type = rf ? json_object_get(rf, "type") : NULL;
+    CHECK(type && json_is_string(type) &&
+          strcmp(json_string_value(type), "json_object") == 0);
+    json_free(root);
+    free(body);
+    agent_free(agent);
+    OK();
+}
+
+static void test_build_request_json_schema(void) {
+    TEST("request includes response_format json_schema");
+    provider_config_t cfg = test_config(false, 0);
+    cfg.response_format = strdup("json_schema");
+    cfg.json_schema = strdup(
+        "{\"type\":\"object\",\"properties\":{\"a\":{\"type\":\"string\"}}}");
+    agent_t *agent = agent_create(&cfg, g_api);
+    free(cfg.api_key); free(cfg.base_url); free(cfg.model);
+    free(cfg.response_format); free(cfg.json_schema);
+
+    char *body = agent->api->build_request(agent);
+    CHECK(body != NULL);
+    json_value_t *root = json_parse(body);
+    CHECK(root != NULL);
+    json_value_t *rf = root ? json_object_get(root, "response_format") : NULL;
+    CHECK(rf != NULL && json_is_object(rf));
+    json_value_t *type = rf ? json_object_get(rf, "type") : NULL;
+    CHECK(type && json_is_string(type) &&
+          strcmp(json_string_value(type), "json_schema") == 0);
+    json_value_t *schema = rf ? json_object_get(rf, "json_schema") : NULL;
+    CHECK(schema != NULL && json_is_object(schema));
+    json_free(root);
+    free(body);
+    agent_free(agent);
+    OK();
+}
+
+static void test_normalize_json_output(void) {
+    TEST("json output normalization strips fences");
+    char *out = agent_normalize_json_output("```json\n{\"a\": 1}\n```");
+    CHECK(out != NULL);
+    CHECK(strcmp(out, "{\"a\": 1}") == 0);
+    free(out);
+
+    out = agent_normalize_json_output("  {\"b\": 2}  \n");
+    CHECK(out != NULL);
+    CHECK(strcmp(out, "{\"b\": 2}  \n") == 0);  /* leading ws trimmed only */
+    free(out);
+
+    out = agent_normalize_json_output(NULL);
+    CHECK(out == NULL);
+    OK();
+}
+
+static void test_json_fence_stripping_in_chat(void) {
+    TEST("agent_chat strips fences when json mode is on");
+    http_mock_enable();
+    push_response_with_usage("```json\n{\"result\":\"ok\"}\n```", 10, 5);
+
+    provider_config_t cfg = test_config(false, 0);
+    cfg.response_format = strdup("json_object");
+    agent_t *agent = agent_create(&cfg, g_api);
+    free(cfg.api_key); free(cfg.base_url); free(cfg.model); free(cfg.response_format);
+
+    message_t *resp = agent_chat(agent, "give me json");
+    CHECK(resp != NULL);
+    CHECK(resp->content && strcmp(resp->content, "{\"result\":\"ok\"}") == 0);
+
+    message_free(resp);
+    agent_free(agent);
+    http_mock_clear();
+    OK();
+}
+
 int main(void) {
     printf("Agent reliability tests:\n");
     provider_init();
@@ -465,6 +553,10 @@ int main(void) {
     test_exec_interrupt();
     test_agent_interrupt();
     test_stream_interrupt();
+    test_build_request_json_object();
+    test_build_request_json_schema();
+    test_normalize_json_output();
+    test_json_fence_stripping_in_chat();
 
     http_mock_disable();
     http_cleanup();

@@ -396,6 +396,24 @@ that the request loops check:
 - In single-shot `-q` mode, the request is cancelled and cgent exits
   with status 130.
 
+### Structured Output
+
+Request JSON-shaped responses instead of free text:
+
+```bash
+# JSON object mode (DeepSeek/OpenAI)
+cgent --json -q "List 3 project ideas as JSON"
+
+# JSON schema mode — enforce a specific schema from a file
+cgent --json-schema schema.json -q "Describe the API"
+```
+
+The schema is passed through as `response_format` in the request. In the
+REPL, `/json` toggles JSON object mode. When a structured format is
+active, cgent strips ```` ```json ```` code fences from the output so the
+result is clean JSON. Per-model defaults can be set in `settings.json`
+with `"response_format"` and `"json_schema"`.
+
 ### Task Planning (Todos)
 
 For multi-step tasks the agent can lay out an explicit plan with

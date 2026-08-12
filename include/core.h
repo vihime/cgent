@@ -80,6 +80,8 @@ typedef struct {
     bool auto_compact;          /* Auto-compact when context is nearly full */
     double compact_ratio;       /* Fraction of context that triggers compaction */
     bool parallel_tools;        /* Execute independent tool calls in parallel */
+    char *response_format;      /* "json_object" or "json_schema" (or NULL) */
+    char *json_schema;          /* Inline JSON schema for json_schema mode */
 } provider_config_t;
 
 /* ── Agent ──────────────────────────────────────────────────────── */
@@ -162,6 +164,11 @@ typedef struct {
 
 /* Estimate the current conversation size against the context window. */
 void agent_context_stats(const agent_t *agent, agent_context_stats_t *st);
+
+/* Strip ```json ... ``` fences and surrounding whitespace from model
+ * output (used when a structured response format is requested).
+ * Returns a malloc'd string, or NULL if content is NULL. */
+char *agent_normalize_json_output(const char *content);
 
 /* Summarize the conversation via a compaction request and replace the
  * history with the summary. Returns the number of messages compacted,

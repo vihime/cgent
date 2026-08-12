@@ -106,6 +106,36 @@ void agent_context_stats(const agent_t *agent, agent_context_stats_t *st) {
     st->total_tokens = st->system_tokens + st->tool_tokens + st->message_tokens;
 }
 
+char *agent_normalize_json_output(const char *content) {
+    if (!content) return NULL;
+
+    /* Skip leading whitespace */
+    const char *p = content;
+    while (*p == ' ' || *p == '\t' || *p == '\r' || *p == '\n') p++;
+
+    /* Strip a ```json (or bare ```) code fence if present */
+    const char *fence = strstr(p, "```");
+    if (fence) {
+        const char *body = fence + 3;
+        while (*body && *body != '\n') body++;   /* skip language tag */
+        if (*body == '\n') body++;
+        const char *end = strstr(body, "```");
+        if (end) {
+            size_t len = (size_t)(end - body);
+            while (len > 0 && (body[len-1] == ' ' || body[len-1] == '\t' ||
+                               body[len-1] == '\r' || body[len-1] == '\n'))
+                len--;
+            char *out = malloc(len + 1);
+            if (out) {
+                memcpy(out, body, len);
+                out[len] = '\0';
+                return out;
+            }
+        }
+    }
+    return strdup(p);
+}
+
 /* Build a plain-text transcript of the conversation (for compaction). */
 static char *agent_build_transcript(const agent_t *agent) {
     if (!agent || agent->n_messages == 0) return NULL;
@@ -440,6 +470,10 @@ agent_t *agent_create(provider_config_t *config, struct api_provider *api) {
         agent->provider.auto_compact     = config->auto_compact;
         agent->provider.compact_ratio    = config->compact_ratio;
         agent->provider.parallel_tools   = config->parallel_tools;
+        agent->provider.response_format  = config->response_format
+                                           ? strdup(config->response_format) : NULL;
+        agent->provider.json_schema      = config->json_schema
+                                           ? strdup(config->json_schema) : NULL;
         agent->provider.reasoning_effort   = config->reasoning_effort
                                            ? strdup(config->reasoning_effort) : NULL;
     }
@@ -462,6 +496,8 @@ void agent_free(agent_t *agent) {
     free(agent->provider.base_url);
     free(agent->provider.model);
     free(agent->provider.reasoning_effort);
+    free(agent->provider.response_format);
+    free(agent->provider.json_schema);
     free(agent->system_prompt);
     for (int i = 0; i < agent->n_messages; i++)
         message_clear(&agent->messages[i]);
@@ -929,6 +965,13 @@ message_t *agent_chat(agent_t *agent, const char *user_input) {
         }
 
         /* No tool calls — this is the final response */
+        if (agent->provider.response_format && assistant_msg->content) {
+            char *norm = agent_normalize_json_output(assistant_msg->content);
+            if (norm) {
+                free(assistant_msg->content);
+                assistant_msg->content = norm;
+            }
+        }
         agent_add_message(agent, assistant_msg);
 
         /* Save the final response to return */
@@ -1278,6 +1321,13 @@ message_t *agent_chat_stream(agent_t *agent, const char *user_input,
         }
 
         /* Final response */
+        if (agent->provider.response_format && assistant_msg->content) {
+            char *norm = agent_normalize_json_output(assistant_msg->content);
+            if (norm) {
+                free(assistant_msg->content);
+                assistant_msg->content = norm;
+            }
+        }
         agent_add_message(agent, assistant_msg);
         final_response = message_copy(assistant_msg);
         message_free(assistant_msg);

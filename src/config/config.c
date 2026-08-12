@@ -189,6 +189,17 @@ static void apply_settings_file(cgent_config_t *cfg) {
             v = json_object_get(val, "parallel_tools");
             if (v && json_is_bool(v)) m->parallel_tools = json_bool_value(v);
 
+            v = json_object_get(val, "response_format");
+            if (v && json_is_string(v)) {
+                free(m->response_format);
+                m->response_format = strdup(json_string_value(v));
+            }
+            v = json_object_get(val, "json_schema");
+            if (v && json_is_string(v)) {
+                free(m->json_schema);
+                m->json_schema = strdup(json_string_value(v));
+            }
+
             /* ── thinking: {"type": "enabled"/"disabled"} ── */
             json_value_t *thinking = json_object_get(val, "thinking");
             if (thinking && json_is_object(thinking)) {
@@ -293,6 +304,10 @@ static void resolve_active_model(cgent_config_t *cfg) {
     cfg->auto_compact     = m->auto_compact;
     cfg->compact_ratio    = m->compact_ratio;
     cfg->parallel_tools   = m->parallel_tools;
+    free(cfg->response_format);
+    cfg->response_format  = m->response_format ? strdup(m->response_format) : NULL;
+    free(cfg->json_schema);
+    cfg->json_schema      = m->json_schema ? strdup(m->json_schema) : NULL;
     free(cfg->reasoning_effort);
     cfg->reasoning_effort = m->reasoning_effort ? strdup(m->reasoning_effort) : NULL;
 
@@ -580,12 +595,16 @@ void config_free(cgent_config_t *cfg) {
         free(cfg->models[i].provider);
         free(cfg->models[i].api_key);
         free(cfg->models[i].base_url);
+        free(cfg->models[i].response_format);
+        free(cfg->models[i].json_schema);
         free(cfg->models[i].reasoning_effort);
     }
     free(cfg->provider);
     free(cfg->model);
     free(cfg->api_key);
     free(cfg->base_url);
+    free(cfg->response_format);
+    free(cfg->json_schema);
     free(cfg->reasoning_effort);
     free(cfg->agent_dir);
     free(cfg->system_prompt);

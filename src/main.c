@@ -40,6 +40,8 @@ static void print_usage(const char *prog) {
     printf("      --retries <n>         Transient-failure retries per request (default: 3)\n");
     printf("      --no-auto-compact     Disable automatic context compaction\n");
     printf("      --no-parallel-tools   Execute tool calls sequentially\n");
+    printf("      --json                Request JSON object output\n");
+    printf("      --json-schema <file>  Request output matching a JSON schema\n");
     printf("  -n, --no-stream          Disable streaming output\n");
     printf("  -y, --yes                Skip approval prompts for risky tools\n");
     printf("  -c, --config <path>      Config file path\n");
@@ -93,7 +95,7 @@ static char *tab_complete(const char *input) {
     /* Built-in commands */
     static const char *builtins[] = {
         "/quit", "/exit", "/help", "/clear", "/tools", "/agents", "/skills",
-        "/model", "/context", "/usage", "/todos", "/compact", NULL
+        "/model", "/context", "/usage", "/todos", "/json", "/compact", NULL
     };
 
     /* Find matches: any builtin or skill that starts with our input */
@@ -270,6 +272,35 @@ int main(int argc, char **argv) {
     }
     config_apply_cli(cfg, &args);
 
+    /* ── Structured output from CLI ────────────────────────────── */
+    if (args.json_mode) {
+        free(cfg->response_format);
+        cfg->response_format = strdup("json_object");
+    }
+    if (args.json_schema_path) {
+        FILE *sfp = fopen(args.json_schema_path, "r");
+        if (sfp) {
+            fseek(sfp, 0, SEEK_END);
+            long sz = ftell(sfp);
+            fseek(sfp, 0, SEEK_SET);
+            if (sz > 0 && sz <= 65536) {
+                char *data = malloc(sz + 1);
+                size_t nread = fread(data, 1, sz, sfp);
+                data[nread] = '\0';
+                free(cfg->json_schema);
+                cfg->json_schema = data;
+                free(cfg->response_format);
+                cfg->response_format = strdup("json_schema");
+            } else {
+                fprintf(stderr, "Error: JSON schema file too large or empty\n");
+            }
+            fclose(sfp);
+        } else {
+            fprintf(stderr, "Error: cannot read JSON schema file: %s\n",
+                    args.json_schema_path);
+        }
+    }
+
     /* Set up tab completion */
     g_completion_cfg = cfg;
     utf8_set_completer(tab_complete);
@@ -356,6 +387,8 @@ int main(int argc, char **argv) {
         .auto_compact       = cfg->auto_compact,
         .compact_ratio      = cfg->compact_ratio,
         .parallel_tools     = cfg->parallel_tools,
+        .response_format    = cfg->response_format,
+        .json_schema        = cfg->json_schema,
     };
 
     /* Create agent */
@@ -576,6 +609,7 @@ int main(int argc, char **argv) {
                     printf("  /context      — Show context usage breakdown\n");
                     printf("  /usage        — Show API token usage for this session\n");
                     printf("  /todos        — Show the agent's todo list\n");
+                    printf("  /json         — Toggle JSON object output mode\n");
                     printf("  /compact      — Compress conversation history\n");
                     printf("  /skills       — List loaded skills\n");
                     if (cfg->skills && cfg->skills->count > 0) {
@@ -684,6 +718,17 @@ int main(int argc, char **argv) {
                         }
                     }
                     todo_items_free(todos, n);
+                } else if (strcmp(line, "/json") == 0) {
+                    if (agent->provider.response_format &&
+                        strcmp(agent->provider.response_format, "json_object") == 0) {
+                        free(agent->provider.response_format);
+                        agent->provider.response_format = NULL;
+                        printf("JSON mode disabled.\n");
+                    } else {
+                        free(agent->provider.response_format);
+                        agent->provider.response_format = strdup("json_object");
+                        printf("JSON mode enabled (json_object).\n");
+                    }
                 } else if (strcmp(line, "/compact") == 0) {
                     if (agent->n_messages == 0) {
                         printf("Nothing to compact — conversation is empty.\n");
@@ -758,6 +803,12 @@ int main(int argc, char **argv) {
                             agent->provider.auto_compact = cfg->auto_compact;
                             agent->provider.compact_ratio = cfg->compact_ratio;
                             agent->provider.parallel_tools = cfg->parallel_tools;
+                            free(agent->provider.response_format);
+                            agent->provider.response_format = cfg->response_format
+                                ? strdup(cfg->response_format) : NULL;
+                            free(agent->provider.json_schema);
+                            agent->provider.json_schema = cfg->json_schema
+                                ? strdup(cfg->json_schema) : NULL;
                             free(agent->provider.reasoning_effort);
                             agent->provider.reasoning_effort = cfg->reasoning_effort
                                 ? strdup(cfg->reasoning_effort) : NULL;
