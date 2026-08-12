@@ -35,6 +35,7 @@ static void print_usage(const char *prog) {
     printf("  -a, --agent <dir>        Agent directory (default: agents/cgent/)\n");
     printf("  -t, --temperature <t>    Temperature 0.0–2.0 (default: 0.7)\n");
     printf("  -M, --max-tokens <n>     Max output tokens (default: 4096)\n");
+    printf("      --retries <n>         Transient-failure retries per request (default: 3)\n");
     printf("  -n, --no-stream          Disable streaming output\n");
     printf("  -c, --config <path>      Config file path\n");
     printf("  -r, --resume <uuid>      Resume session by UUID\n");
@@ -86,7 +87,8 @@ static char *tab_complete(const char *input) {
 
     /* Built-in commands */
     static const char *builtins[] = {
-        "/quit", "/exit", "/help", "/clear", "/tools", "/agents", "/skills", "/model", "/context", "/compact", NULL
+        "/quit", "/exit", "/help", "/clear", "/tools", "/agents", "/skills",
+        "/model", "/context", "/usage", "/compact", NULL
     };
 
     /* Find matches: any builtin or skill that starts with our input */
@@ -151,6 +153,34 @@ static void on_token(const char *token, void *ctx) {
     (void)ctx;
     printf("%s", token);
     fflush(stdout);
+}
+
+/* ── Usage accounting ───────────────────────────────────────────── */
+
+/* Fold the agent's per-turn counters into the session totals. */
+static void session_track_usage(session_t *session, const agent_t *agent,
+                                long long *last_prompt,
+                                long long *last_completion,
+                                int *last_requests, int *last_retries) {
+    if (!session || !agent) return;
+    session->prompt_tokens += agent->prompt_tokens - *last_prompt;
+    session->completion_tokens += agent->completion_tokens - *last_completion;
+    session->request_count += agent->request_count - *last_requests;
+    session->retry_count += agent->retry_count - *last_retries;
+    *last_prompt = agent->prompt_tokens;
+    *last_completion = agent->completion_tokens;
+    *last_requests = agent->request_count;
+    *last_retries = agent->retry_count;
+}
+
+static void print_usage_line(const session_t *session) {
+    if (!session || session->request_count <= 0) return;
+    fprintf(stderr,
+            "[usage] %d request(s)%s, %lld in / %lld out tokens (total %lld)\n",
+            session->request_count,
+            session->retry_count > 0 ? " (with retries)" : "",
+            session->prompt_tokens, session->completion_tokens,
+            session->prompt_tokens + session->completion_tokens);
 }
 
 /* ── Main ───────────────────────────────────────────────────────── */
@@ -289,6 +319,7 @@ int main(int argc, char **argv) {
         .thinking_enabled   = cfg->thinking_enabled,
         .thinking_configured = cfg->thinking_configured,
         .reasoning_effort   = cfg->reasoning_effort,
+        .max_retries        = cfg->max_retries,
     };
 
     /* Create agent */
@@ -416,6 +447,9 @@ int main(int argc, char **argv) {
 
     int rc = 0;
 
+    long long last_prompt = 0, last_completion = 0;
+    int last_requests = 0, last_retries = 0;
+
     if (args.query) {
         /* ── Single-shot mode ──────────────────────────────────── */
         /* Add user input to session */
@@ -438,6 +472,9 @@ int main(int argc, char **argv) {
             if (resp) session_add_message(session, resp);
             message_free(resp);
         }
+        session_track_usage(session, agent, &last_prompt, &last_completion,
+                            &last_requests, &last_retries);
+        print_usage_line(session);
         /* Save session */
         session_save(session, cfg);
     } else {
@@ -489,6 +526,7 @@ int main(int argc, char **argv) {
                     printf("  /model [name] — List models or switch to <name>\n");
                     printf("  /agents       — List installed agents\n");
                     printf("  /context      — Show context usage breakdown\n");
+                    printf("  /usage        — Show API token usage for this session\n");
                     printf("  /compact      — Compress conversation history\n");
                     printf("  /skills       — List loaded skills\n");
                     if (cfg->skills && cfg->skills->count > 0) {
@@ -579,6 +617,23 @@ int main(int argc, char **argv) {
                            total, max_ctx > 0 ? 100.0*total/max_ctx : 0);
                     printf("  Free:          %8d tokens (%4.1f%%)\n",
                            max_ctx - total, max_ctx > 0 ? 100.0*(max_ctx-total)/max_ctx : 0);
+                    if (session->request_count > 0) {
+                        printf("  ─────────────────────────────\n");
+                        printf("  API (actual):   %8lld in / %lld out tokens\n",
+                               session->prompt_tokens, session->completion_tokens);
+                        printf("  Requests:       %8d  (retries: %d)\n",
+                               session->request_count, session->retry_count);
+                    }
+                } else if (strcmp(line, "/usage") == 0) {
+                    printf("API usage (this session):\n");
+                    printf("  Requests:      %d\n", session->request_count);
+                    printf("  Retries:       %d\n", session->retry_count);
+                    printf("  Prompt tokens: %lld\n", session->prompt_tokens);
+                    printf("  Completion:    %lld\n", session->completion_tokens);
+                    printf("  Total tokens:  %lld\n",
+                           session->prompt_tokens + session->completion_tokens);
+                    if (session->request_count == 0)
+                        printf("  (no API requests yet)\n");
                 } else if (strcmp(line, "/compact") == 0) {
                     if (agent->n_messages == 0) {
                         printf("Nothing to compact — conversation is empty.\n");
@@ -836,6 +891,7 @@ compact_done:;
                             agent->provider.stream = cfg->stream;
                             agent->provider.thinking_enabled   = cfg->thinking_enabled;
                             agent->provider.thinking_configured = cfg->thinking_configured;
+                            agent->provider.max_retries = cfg->max_retries;
                             free(agent->provider.reasoning_effort);
                             agent->provider.reasoning_effort = cfg->reasoning_effort
                                 ? strdup(cfg->reasoning_effort) : NULL;
@@ -926,6 +982,9 @@ compact_done:;
                         message_free(resp);
                     }
                 }
+                session_track_usage(session, agent, &last_prompt, &last_completion,
+                                    &last_requests, &last_retries);
+                print_usage_line(session);
                 /* Save session */
                 if (session->uuid)
                     session_save(session, cfg);

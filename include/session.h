@@ -21,6 +21,11 @@ typedef struct {
     message_t *messages;
     int message_count;
     int message_cap;
+    /* Cumulative usage / observability (persisted in session metadata) */
+    long long prompt_tokens;
+    long long completion_tokens;
+    int request_count;
+    int retry_count;
 } session_t;
 
 /* ── API ────────────────────────────────────────────────────────── */

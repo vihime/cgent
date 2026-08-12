@@ -52,6 +52,8 @@ message_t *message_copy(const message_t *msg) {
     message_t *copy = calloc(1, sizeof(message_t));
     if (!copy) return NULL;
     copy->role = msg->role;
+    copy->prompt_tokens = msg->prompt_tokens;
+    copy->completion_tokens = msg->completion_tokens;
     if (msg->content) copy->content = strdup(msg->content);
     if (msg->name) copy->name = strdup(msg->name);
     if (msg->reasoning_content) copy->reasoning_content = strdup(msg->reasoning_content);

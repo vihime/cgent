@@ -41,7 +41,7 @@ PROJ_OBJS = $(PROJ_SRCS:.c=.o)
 # Test source files
 TEST_SRCS = test_json.c test_message.c test_config.c test_tools.c \
             test_integration.c test_memory_leak.c test_subagent.c test_mcp.c \
-            test_skills.c
+            test_skills.c test_agent_reliability.c
 
 # Test runner stub
 TEST_RUNNER = runner.c
@@ -49,7 +49,8 @@ TEST_RUNNER = runner.c
 TEST_OBJS = $(TEST_RUNNER:.c=.o) $(PROJ_OBJS)
 
 .PHONY: all clean test test-json test-message test-config test-tools \
-        test-integration test-memory test-subagent test-mcp test-skills test-all
+        test-integration test-memory test-subagent test-mcp test-skills \
+        test-reliability test-all
 
 all: test
 
@@ -81,6 +82,9 @@ test-mcp: $(PROJ_OBJS) test_mcp.c
 test-skills: $(PROJ_OBJS) test_skills.c
 	$(CC) $(CFLAGS) -o $@ test_skills.c $(PROJ_OBJS) $(LDFLAGS)
 
+test-reliability: $(PROJ_OBJS) test_agent_reliability.c
+	$(CC) $(CFLAGS) -o $@ test_agent_reliability.c $(PROJ_OBJS) $(LDFLAGS)
+
 # Compile project objects
 $(SRC_DIR)/%.o: $(SRC_DIR)/%.c
 	@mkdir -p $(dir $@)
@@ -90,7 +94,8 @@ $(SRC_DIR)/%.o: $(SRC_DIR)/%.c
 	$(Q)$(CC) $(CFLAGS) -MMD -MP -c -o $@ $<
 
 # Run all tests
-test: test-json test-message test-config test-tools test-memory test-mcp test-skills
+test: test-json test-message test-config test-tools test-memory test-mcp \
+      test-skills test-reliability
 	@echo "=== Running JSON tests ==="
 	@./test-json
 	@echo ""
@@ -112,6 +117,9 @@ test: test-json test-message test-config test-tools test-memory test-mcp test-sk
 	@echo "=== Running Skill tests ==="
 	@./test-skills
 	@echo ""
+	@echo "=== Running Agent reliability tests ==="
+	@./test-reliability
+	@echo ""
 	@echo "=== All unit tests passed ==="
 
 # Integration test (needs API key)
@@ -121,6 +129,7 @@ test-all: test test-integration
 	@./test-integration
 
 clean:
-	rm -f test-json test-message test-config test-tools test-integration test-memory test-subagent test-mcp test-skills
+	rm -f test-json test-message test-config test-tools test-integration \
+	      test-memory test-subagent test-mcp test-skills test-reliability
 	rm -f $(PROJ_OBJS)
 	rm -f $(SRC_DIR)/**/*.d

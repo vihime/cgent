@@ -143,6 +143,12 @@ static char *deepseek_build_request(const agent_t *agent) {
         json_number(agent->provider.temperature));
     json_object_set(root, "max_tokens",
         json_number(agent->provider.max_tokens));
+    /* Ask for usage in the final streamed chunk so we can account tokens */
+    if (agent->provider.stream) {
+        json_value_t *stream_opts = json_object();
+        json_object_set(stream_opts, "include_usage", json_bool(true));
+        json_object_set(root, "stream_options", stream_opts);
+    }
 
     /* Deep thinking / reasoning */
     if (agent->provider.thinking_configured) {
@@ -252,6 +258,15 @@ static message_t *deepseek_parse_response(const char *body) {
         }
     }
 
+    /* Usage (non-streaming responses) */
+    json_value_t *usage = json_object_get(root, "usage");
+    if (usage && json_is_object(usage)) {
+        json_value_t *pt = json_object_get(usage, "prompt_tokens");
+        json_value_t *ct = json_object_get(usage, "completion_tokens");
+        if (pt && json_is_number(pt)) msg->prompt_tokens = (long long)json_number_value(pt);
+        if (ct && json_is_number(ct)) msg->completion_tokens = (long long)json_number_value(ct);
+    }
+
     json_free(root);
     return msg;
 }
@@ -305,6 +320,15 @@ static message_t *deepseek_parse_chunk(const char *sse_data) {
                 }
             }
         }
+    }
+
+    /* Final chunk carries usage when stream_options.include_usage is set */
+    json_value_t *usage = json_object_get(root, "usage");
+    if (usage && json_is_object(usage)) {
+        json_value_t *pt = json_object_get(usage, "prompt_tokens");
+        json_value_t *ct = json_object_get(usage, "completion_tokens");
+        if (pt && json_is_number(pt)) delta->prompt_tokens = (long long)json_number_value(pt);
+        if (ct && json_is_number(ct)) delta->completion_tokens = (long long)json_number_value(ct);
     }
 
     json_free(root);

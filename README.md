@@ -288,6 +288,23 @@ mcp_servers:
 Servers that fail to start (or expose no tools) are reported as warnings
 on stderr and do not block the session.
 
+## Reliability & Usage
+
+Transient API failures (429, 5xx, or network errors) are retried with
+exponential backoff and jitter before giving up. Configure the retry
+count per model in `settings.json` (`"max_retries": 3`), with `--retries`
+on the CLI, or switch it at runtime with `/model`.
+
+Streaming requests ask the API for usage data (`stream_options.include_usage`)
+and both streaming and non-streaming responses record real
+`prompt_tokens`/`completion_tokens`. Per-session totals are shown after
+each turn on stderr, persisted in the session file, and inspectable in
+the REPL with `/usage` or `/context`:
+
+```
+[usage] 2 request(s), 1234 in / 567 out tokens (total 1801)
+```
+
 ## Skill Management
 
 Skills are markdown definitions in `~/.cgent/skills/<name>/SKILL.md` with

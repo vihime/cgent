@@ -40,6 +40,7 @@ typedef struct {
     bool thinking_enabled;   /* Deep thinking / chain-of-thought */
     bool thinking_configured; /* Whether thinking was explicitly set */
     char *reasoning_effort;  /* "low", "medium", "high", "max" or NULL */
+    int max_retries;         /* Transient-failure retries per request */
 } model_entry_t;
 
 /* ── Runtime configuration ──────────────────────────────────────── */
@@ -64,6 +65,7 @@ typedef struct {
     bool thinking_enabled;
     bool thinking_configured;
     char *reasoning_effort;
+    int max_retries;
 
     /* Agent settings */
     char *agent_dir;
@@ -133,6 +135,7 @@ typedef struct {
     char *resume_uuid;          /* --resume: restore session */
     double temperature;
     int max_tokens;
+    int retries;                /* --retries: -1 = unset (use config) */
     bool stream;
     bool verbose;
     bool help;

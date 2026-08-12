@@ -49,6 +49,7 @@ static void add_default_model(cgent_config_t *cfg, const char *name,
     m->temperature = 0.7;
     m->max_tokens  = 4096;
     m->stream      = true;
+    m->max_retries = 3;
     /* Set context length based on provider defaults */
     if (strcmp(provider, "deepseek") == 0)      m->context_length = 1000000;
     else if (strcmp(provider, "openai") == 0)   m->context_length = 128000;
@@ -80,6 +81,7 @@ static cgent_config_t defaults(void) {
     cfg.agent_dir     = strdup("agents/cgent/");
     cfg.system_prompt = NULL;
     cfg.verbose       = false;
+    cfg.max_retries   = 3;
     cfg.cgent_dir     = config_cgent_dir();
 
     return cfg;
@@ -162,6 +164,12 @@ static void apply_settings_file(cgent_config_t *cfg) {
 
             v = json_object_get(val, "context_length");
             if (v && json_is_number(v)) m->context_length = (int)json_number_value(v);
+
+            v = json_object_get(val, "max_retries");
+            if (v && json_is_number(v)) {
+                int r = (int)json_number_value(v);
+                m->max_retries = r >= 0 ? r : 0;
+            }
 
             /* ── thinking: {"type": "enabled"/"disabled"} ── */
             json_value_t *thinking = json_object_get(val, "thinking");
@@ -263,6 +271,7 @@ static void resolve_active_model(cgent_config_t *cfg) {
     cfg->stream           = m->stream;
     cfg->thinking_enabled   = m->thinking_enabled;
     cfg->thinking_configured = m->thinking_configured;
+    cfg->max_retries      = m->max_retries;
     free(cfg->reasoning_effort);
     cfg->reasoning_effort = m->reasoning_effort ? strdup(m->reasoning_effort) : NULL;
 
@@ -350,25 +359,26 @@ typedef struct {
     bool stream;
     bool thinking_enabled;
     const char *reasoning_effort;
+    int max_retries;
 } model_preset_t;
 
 static const model_preset_t PROVIDER_PRESETS[] = {
     /* DeepSeek models */
     { "deepseek-v4-flash",   "deepseek", "https://api.deepseek.com",
-      0.7, 32768, 1048576, true, true,  "high" },
+      0.7, 32768, 1048576, true, true,  "high", 3 },
     { "deepseek-v4-pro[1m]", "deepseek", "https://api.deepseek.com",
-      0.7, 32768, 1048576, true, true,  "high" },
+      0.7, 32768, 1048576, true, true,  "high", 3 },
     /* OpenAI models */
     { "gpt-4o",              "openai",   "https://api.openai.com",
-      0.7, 4096,  128000,  true,  false, NULL },
+      0.7, 4096,  128000,  true,  false, NULL, 3 },
     { "gpt-4o-mini",         "openai",   "https://api.openai.com",
-      0.7, 4096,  128000,  true,  false, NULL },
+      0.7, 4096,  128000,  true,  false, NULL, 3 },
     /* Anthropic models */
     { "claude-sonnet-4-6",   "anthropic","https://api.anthropic.com",
-      0.7, 4096,  200000,  true,  false, NULL },
+      0.7, 4096,  200000,  true,  false, NULL, 3 },
     { "claude-opus-4-8",     "anthropic","https://api.anthropic.com",
-      0.7, 4096,  200000,  true,  false, NULL },
-    { NULL, NULL, NULL, 0, 0, 0, false, false, NULL },
+      0.7, 4096,  200000,  true,  false, NULL, 3 },
+    { NULL, NULL, NULL, 0, 0, 0, false, false, NULL, 0 },
 };
 
 /* Apply a model preset to a JSON object (for settings.json "models" section) */
@@ -382,6 +392,7 @@ static void apply_preset_to_json(json_value_t *model_obj, const model_preset_t *
     json_object_set(model_obj, "max_tokens", json_number(p->max_tokens));
     json_object_set(model_obj, "context_length", json_number(p->context_length));
     json_object_set(model_obj, "stream", json_bool(p->stream));
+    json_object_set(model_obj, "max_retries", json_number(p->max_retries));
     if (p->thinking_enabled) {
         json_value_t *thinking = json_object();
         json_object_set(thinking, "type", json_string("enabled"));

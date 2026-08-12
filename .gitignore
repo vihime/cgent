@@ -14,6 +14,7 @@ test/test-memory
 test/test-subagent
 test/test-mcp
 test/test-skills
+test/test-reliability
 
 # IDE / editor
 *.swp

@@ -20,6 +20,32 @@
 #include <stdlib.h>
 #include <string.h>
 
+/* ── Retry / usage helpers ──────────────────────────────────────── */
+
+static bool http_status_transient(int code) {
+    return code == 429 || (code >= 500 && code <= 504);
+}
+
+static void agent_sleep_ms(int ms) {
+    if (ms > 0) usleep((useconds_t)ms * 1000);
+}
+
+/* Exponential backoff (500ms, 1s, 2s, ...) with ±20% jitter. */
+static int retry_delay_ms(int attempt) {
+    int base = 500 * (1 << attempt);
+    int jitter = base / 5;
+    return base - jitter + (rand() % (2 * jitter + 1));
+}
+
+/* Account one completed API request (usage may be 0 when unknown). */
+static void agent_record_usage(agent_t *agent, const message_t *msg) {
+    if (!agent || !msg) return;
+    agent->request_count++;
+    if (msg->prompt_tokens > 0) agent->prompt_tokens += msg->prompt_tokens;
+    if (msg->completion_tokens > 0)
+        agent->completion_tokens += msg->completion_tokens;
+}
+
 /* ── Agent lifecycle ────────────────────────────────────────────── */
 
 agent_t *agent_create(provider_config_t *config, struct api_provider *api) {
@@ -35,6 +61,7 @@ agent_t *agent_create(provider_config_t *config, struct api_provider *api) {
         agent->provider.stream           = config->stream;
         agent->provider.thinking_enabled   = config->thinking_enabled;
         agent->provider.thinking_configured = config->thinking_configured;
+        agent->provider.max_retries      = config->max_retries;
         agent->provider.reasoning_effort   = config->reasoning_effort
                                            ? strdup(config->reasoning_effort) : NULL;
     }
@@ -400,8 +427,32 @@ message_t *agent_chat(agent_t *agent, const char *user_input) {
             fprintf(stderr, "[agent] POST %s\n", url);
         }
 
-        /* Send request */
-        http_response_t *resp = http_request(&req);
+        /* Send request, retrying transient failures (429/5xx/network) */
+        http_response_t *resp = NULL;
+        int max_retries = agent->provider.max_retries;
+        if (max_retries < 0) max_retries = 0;
+        int attempt = 0;
+
+        while (1) {
+            resp = http_request(&req);
+            if (resp && resp->status_code >= 200 && resp->status_code < 300)
+                break;
+
+            int code = resp ? resp->status_code : 0;
+            bool transient = !resp || http_status_transient(code);
+            if (!transient || attempt >= max_retries) break;
+
+            if (resp) http_response_free(resp);
+            resp = NULL;
+            agent->retry_count++;
+            int delay = retry_delay_ms(attempt);
+            fprintf(stderr,
+                    "[agent] request failed (HTTP %d), retrying in %dms "
+                    "(attempt %d/%d)\n",
+                    code, delay, attempt + 1, max_retries);
+            agent_sleep_ms(delay);
+            attempt++;
+        }
 
         /* Cleanup request data */
         free(body);
@@ -410,7 +461,8 @@ message_t *agent_chat(agent_t *agent, const char *user_input) {
         for (int i = 0; i < n_headers; i++) free(headers[i]);
 
         if (!resp) {
-            fprintf(stderr, "[agent] HTTP request failed\n");
+            fprintf(stderr, "[agent] HTTP request failed%s\n",
+                    attempt > 0 ? " after retries" : "");
             break;
         }
 
@@ -470,6 +522,8 @@ message_t *agent_chat(agent_t *agent, const char *user_input) {
             assistant_msg->raw_response = json_stringify(summary);
             json_free(summary);
         }
+
+        agent_record_usage(agent, assistant_msg);
 
         if (assistant_msg->n_tool_calls > 0) {
             if (agent->verbose) {
@@ -594,6 +648,11 @@ static bool stream_sse_event(const sse_event_t *ev, void *p) {
         rx->reasoning_len += rl;
         rx->reasoning_buf[rx->reasoning_len] = '\0';
     }
+    /* Usage from the final chunk (stream_options.include_usage) */
+    if (delta->prompt_tokens > 0)
+        rx->accum->prompt_tokens = delta->prompt_tokens;
+    if (delta->completion_tokens > 0)
+        rx->accum->completion_tokens = delta->completion_tokens;
     for (int i = 0; i < delta->n_tool_calls; i++) {
         int idx = delta->n_tool_calls > 1 ? i : 0;
         bool found = false;
@@ -684,85 +743,147 @@ message_t *agent_chat_stream(agent_t *agent, const char *user_input,
 
         /* Use real streaming HTTP if streaming is enabled */
         if (agent->provider.stream) {
-            stream_rx_t rx = {0};
-            rx.parser = sse_parser_create();
-            rx.accum = message_create(MSG_ROLE_ASSISTANT, NULL);
-            rx.api = agent->api;
-            rx.on_token = on_token;
-            rx.token_ctx = ctx;
-            rx.verbose = agent->verbose;
+            int max_retries = agent->provider.max_retries;
+            if (max_retries < 0) max_retries = 0;
+            int attempt = 0;
+            assistant_msg = NULL;
 
-            http_response_t *resp = http_request_stream(&req, stream_rx_data, &rx);
-            sse_parser_flush(rx.parser, NULL, NULL);
+            while (1) {
+                stream_rx_t rx = {0};
+                rx.parser = sse_parser_create();
+                rx.accum = message_create(MSG_ROLE_ASSISTANT, NULL);
+                rx.api = agent->api;
+                rx.on_token = on_token;
+                rx.token_ctx = ctx;
+                rx.verbose = agent->verbose;
 
-            if (rx.text_buf) rx.accum->content = rx.text_buf;
-            if (rx.reasoning_buf) rx.accum->reasoning_content = rx.reasoning_buf;
-            /* Build API response summary (content + reasoning_content) */
-            {
-                json_value_t *summary = json_object();
-                json_object_set(summary, "content",
-                    rx.accum->content ? json_string(rx.accum->content) : json_string(""));
-                json_object_set(summary, "reasoning_content",
-                    rx.accum->reasoning_content ? json_string(rx.accum->reasoning_content) : json_string(""));
-                rx.accum->raw_response = json_stringify(summary);
-                json_free(summary);
-            }
-            /* Flush merged tool calls */
-            for (int i = 0; i < rx.n_ptc; i++) {
-                if (rx.ptc_id[i] && rx.ptc_id[i][0])
-                    message_add_tool_call(rx.accum, rx.ptc_id[i],
-                        rx.ptc_name[i] ? rx.ptc_name[i] : "",
-                        rx.ptc_args[i] ? rx.ptc_args[i] : "{}");
-                free(rx.ptc_id[i]); free(rx.ptc_name[i]); free(rx.ptc_args[i]);
-            }
-            sse_parser_free(rx.parser);
-            assistant_msg = rx.accum;
+                http_response_t *resp = http_request_stream(&req, stream_rx_data, &rx);
+                sse_parser_flush(rx.parser, NULL, NULL);
 
-            if (!resp || resp->status_code < 200 || resp->status_code >= 300) {
-                if (resp) {
-                    fprintf(stderr, "[agent] API error (HTTP %d)\n", resp->status_code);
-                    http_response_free(resp);
-                } else {
-                    fprintf(stderr, "[agent] HTTP request failed\n");
+                if (rx.text_buf) rx.accum->content = rx.text_buf;
+                if (rx.reasoning_buf) rx.accum->reasoning_content = rx.reasoning_buf;
+
+                int code = resp ? resp->status_code : 0;
+                bool ok = resp && code >= 200 && code < 300;
+                if (!ok) {
+                    /* Only retry before any output was emitted — retrying a
+                     * partially-streamed response would duplicate output. */
+                    bool emitted = rx.text_len > 0 || rx.reasoning_len > 0
+                                   || rx.n_ptc > 0;
+                    bool transient = !resp || http_status_transient(code);
+                    bool can_retry = transient && !emitted && attempt < max_retries;
+
+                    message_free(rx.accum);
+                    sse_parser_free(rx.parser);
+                    for (int i = 0; i < rx.n_ptc; i++) {
+                        free(rx.ptc_id[i]); free(rx.ptc_name[i]);
+                        free(rx.ptc_args[i]);
+                    }
+                    if (resp) http_response_free(resp);
+
+                    if (!can_retry) {
+                        if (resp) {
+                            fprintf(stderr, "[agent] API error (HTTP %d)%s\n",
+                                    code, emitted ? " (after partial output)" : "");
+                        } else {
+                            fprintf(stderr, "[agent] HTTP request failed%s\n",
+                                    attempt > 0 ? " after retries" : "");
+                        }
+                        break;
+                    }
+                    agent->retry_count++;
+                    int delay = retry_delay_ms(attempt);
+                    fprintf(stderr,
+                            "[agent] stream request failed (HTTP %d), "
+                            "retrying in %dms (attempt %d/%d)\n",
+                            code, delay, attempt + 1, max_retries);
+                    agent_sleep_ms(delay);
+                    attempt++;
+                    continue;
                 }
-                message_free(assistant_msg); assistant_msg = NULL;
-                free(body); free(url); free(auth_val);
-                for (int i = 0; i < n_headers; i++) free(headers[i]);
+                http_response_free(resp);
+
+                /* Build API response summary (content + reasoning_content) */
+                {
+                    json_value_t *summary = json_object();
+                    json_object_set(summary, "content",
+                        rx.accum->content ? json_string(rx.accum->content) : json_string(""));
+                    json_object_set(summary, "reasoning_content",
+                        rx.accum->reasoning_content ? json_string(rx.accum->reasoning_content) : json_string(""));
+                    rx.accum->raw_response = json_stringify(summary);
+                    json_free(summary);
+                }
+                /* Flush merged tool calls */
+                for (int i = 0; i < rx.n_ptc; i++) {
+                    if (rx.ptc_id[i] && rx.ptc_id[i][0])
+                        message_add_tool_call(rx.accum, rx.ptc_id[i],
+                            rx.ptc_name[i] ? rx.ptc_name[i] : "",
+                            rx.ptc_args[i] ? rx.ptc_args[i] : "{}");
+                    free(rx.ptc_id[i]); free(rx.ptc_name[i]); free(rx.ptc_args[i]);
+                }
+                sse_parser_free(rx.parser);
+                assistant_msg = rx.accum;
                 break;
             }
-            http_response_free(resp);
         } else {
             /* Fallback: non-streaming HTTP */
-            http_response_t *resp = http_request(&req);
+            http_response_t *resp = NULL;
+            int max_retries = agent->provider.max_retries;
+            if (max_retries < 0) max_retries = 0;
+            int attempt = 0;
+
+            while (1) {
+                resp = http_request(&req);
+                if (resp && resp->status_code >= 200 && resp->status_code < 300)
+                    break;
+                int code = resp ? resp->status_code : 0;
+                bool transient = !resp || http_status_transient(code);
+                if (!transient || attempt >= max_retries) break;
+                if (resp) http_response_free(resp);
+                resp = NULL;
+                agent->retry_count++;
+                int delay = retry_delay_ms(attempt);
+                fprintf(stderr,
+                        "[agent] request failed (HTTP %d), retrying in %dms "
+                        "(attempt %d/%d)\n",
+                        code, delay, attempt + 1, max_retries);
+                agent_sleep_ms(delay);
+                attempt++;
+            }
+
             if (!resp || resp->status_code < 200 || resp->status_code >= 300) {
                 if (resp) {
                     fprintf(stderr, "[agent] API error (HTTP %d): %s\n",
                             resp->status_code, resp->body ? resp->body : "");
                     http_response_free(resp);
-                } else fprintf(stderr, "[agent] HTTP request failed\n");
-                free(body); free(url); free(auth_val);
-                for (int i = 0; i < n_headers; i++) free(headers[i]);
-                break;
+                } else {
+                    fprintf(stderr, "[agent] HTTP request failed%s\n",
+                            attempt > 0 ? " after retries" : "");
+                }
+                assistant_msg = NULL;
+            } else {
+                assistant_msg = agent_parse_response_body(
+                    agent->api, resp->body, agent->verbose, on_token, ctx);
+                /* Build API response summary for session logging */
+                if (assistant_msg) {
+                    json_value_t *summary = json_object();
+                    json_object_set(summary, "content",
+                        assistant_msg->content ? json_string(assistant_msg->content) : json_string(""));
+                    json_object_set(summary, "reasoning_content",
+                        assistant_msg->reasoning_content ? json_string(assistant_msg->reasoning_content) : json_string(""));
+                    assistant_msg->raw_response = json_stringify(summary);
+                    json_free(summary);
+                }
+                http_response_free(resp);
             }
-            assistant_msg = agent_parse_response_body(
-                agent->api, resp->body, agent->verbose, on_token, ctx);
-            /* Build API response summary for session logging */
-            if (assistant_msg) {
-                json_value_t *summary = json_object();
-                json_object_set(summary, "content",
-                    assistant_msg->content ? json_string(assistant_msg->content) : json_string(""));
-                json_object_set(summary, "reasoning_content",
-                    assistant_msg->reasoning_content ? json_string(assistant_msg->reasoning_content) : json_string(""));
-                assistant_msg->raw_response = json_stringify(summary);
-                json_free(summary);
-            }
-            http_response_free(resp);
         }
 
         free(body); free(url); free(auth_val);
         for (int i = 0; i < n_headers; i++) free(headers[i]);
 
         if (!assistant_msg) break;
+
+        agent_record_usage(agent, assistant_msg);
 
         /* Handle tool calls */
         if (assistant_msg->n_tool_calls > 0) {

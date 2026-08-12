@@ -159,6 +159,10 @@ bool session_save(session_t *s, const cgent_config_t *cfg) {
     json_object_set(meta, "model", json_string(cfg->model));
     if (cfg->system_prompt)
         json_object_set(meta, "system_prompt", json_string(cfg->system_prompt));
+    json_object_set(meta, "prompt_tokens", json_number((double)s->prompt_tokens));
+    json_object_set(meta, "completion_tokens", json_number((double)s->completion_tokens));
+    json_object_set(meta, "request_count", json_number(s->request_count));
+    json_object_set(meta, "retry_count", json_number(s->retry_count));
 
     char *meta_str = json_stringify(meta);
     json_free(meta);
@@ -214,6 +218,14 @@ static void session_parse_message(session_t *s, json_value_t *jm) {
             free(s->created_at);
             s->created_at = strdup(json_string_value(v));
         }
+        v = json_object_get(jm, "prompt_tokens");
+        if (v && json_is_number(v)) s->prompt_tokens = (long long)json_number_value(v);
+        v = json_object_get(jm, "completion_tokens");
+        if (v && json_is_number(v)) s->completion_tokens = (long long)json_number_value(v);
+        v = json_object_get(jm, "request_count");
+        if (v && json_is_number(v)) s->request_count = (int)json_number_value(v);
+        v = json_object_get(jm, "retry_count");
+        if (v && json_is_number(v)) s->retry_count = (int)json_number_value(v);
         return;
     }
 

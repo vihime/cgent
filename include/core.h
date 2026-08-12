@@ -41,6 +41,8 @@ typedef struct {
     int n_tool_calls;
     tool_result_t *tool_results; /* Array (tool role) */
     int n_tool_results;
+    long long prompt_tokens;    /* Usage reported by the API (0 if unknown) */
+    long long completion_tokens;
 } message_t;
 
 /* ── Tool ───────────────────────────────────────────────────────── */
@@ -71,6 +73,7 @@ typedef struct {
     bool thinking_enabled;
     bool thinking_configured;
     char *reasoning_effort;
+    int max_retries;            /* Transient-failure retries per request */
 } provider_config_t;
 
 /* ── Agent ──────────────────────────────────────────────────────── */
@@ -99,6 +102,12 @@ struct agent {
 
     /* Settings */
     bool verbose;
+
+    /* Usage / observability counters (cumulative over agent lifetime) */
+    long long prompt_tokens;
+    long long completion_tokens;
+    int request_count;
+    int retry_count;
 };
 
 /* ── Message lifecycle ──────────────────────────────────────────── */
