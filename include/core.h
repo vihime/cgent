@@ -59,6 +59,7 @@ typedef struct {
     char *parameters_schema;    /* JSON Schema for the function parameters */
     tool_handler_t handler;     /* Execution function */
     void *userdata;             /* Opaque handler context (MCP sessions, etc.) */
+    bool requires_approval;     /* Prompt the user before executing */
 } tool_t;
 
 /* ── Provider config ────────────────────────────────────────────── */
@@ -74,6 +75,9 @@ typedef struct {
     bool thinking_configured;
     char *reasoning_effort;
     int max_retries;            /* Transient-failure retries per request */
+    int context_length;         /* Model context window (tokens) */
+    bool auto_compact;          /* Auto-compact when context is nearly full */
+    double compact_ratio;       /* Fraction of context that triggers compaction */
 } provider_config_t;
 
 /* ── Agent ──────────────────────────────────────────────────────── */
@@ -102,6 +106,9 @@ struct agent {
 
     /* Settings */
     bool verbose;
+
+    /* Context management */
+    bool compacting;            /* True while a compaction request runs */
 
     /* Usage / observability counters (cumulative over agent lifetime) */
     long long prompt_tokens;
@@ -137,6 +144,27 @@ void    tool_free(tool_t *tool);
 /* Create an agent bound to a provider */
 agent_t *agent_create(provider_config_t *config, struct api_provider *api);
 void     agent_free(agent_t *agent);
+
+/* ── Context management ─────────────────────────────────────────── */
+
+/* Rough token estimate for a string: ASCII ~4 chars/token, CJK ~1
+ * char/token, other non-ASCII ~2 chars/token. */
+long long agent_estimate_tokens(const char *text);
+
+typedef struct {
+    long long system_tokens;
+    long long tool_tokens;
+    long long message_tokens;
+    long long total_tokens;
+} agent_context_stats_t;
+
+/* Estimate the current conversation size against the context window. */
+void agent_context_stats(const agent_t *agent, agent_context_stats_t *st);
+
+/* Summarize the conversation via a compaction request and replace the
+ * history with the summary. Returns the number of messages compacted,
+ * or -1 on failure/empty conversation. */
+int agent_compact(agent_t *agent);
 
 /* Set the system prompt */
 void     agent_set_system_prompt(agent_t *agent, const char *prompt);

@@ -46,6 +46,265 @@ static void agent_record_usage(agent_t *agent, const message_t *msg) {
         agent->completion_tokens += msg->completion_tokens;
 }
 
+/* ── Context management ─────────────────────────────────────────── */
+
+long long agent_estimate_tokens(const char *text) {
+    if (!text) return 0;
+    long long ascii = 0, cjk = 0, other = 0;
+    const unsigned char *p = (const unsigned char *)text;
+    while (*p) {
+        unsigned char c = *p;
+        if (c < 0x80) { ascii++; p++; continue; }
+        uint32_t cp = 0;
+        int len = 0;
+        if ((c & 0xE0) == 0xC0)      { cp = c & 0x1F; len = 2; }
+        else if ((c & 0xF0) == 0xE0) { cp = c & 0x0F; len = 3; }
+        else if ((c & 0xF8) == 0xF0) { cp = c & 0x07; len = 4; }
+        else { other++; p++; continue; }
+        for (int i = 1; i < len && p[i]; i++)
+            cp = (cp << 6) | (p[i] & 0x3F);
+        /* CJK ranges: ~1 token per character */
+        if ((cp >= 0x3400 && cp <= 0x4DBF) ||
+            (cp >= 0x4E00 && cp <= 0x9FFF) ||
+            (cp >= 0x3000 && cp <= 0x303F) ||
+            (cp >= 0xFF00 && cp <= 0xFFEF)) {
+            cjk++;
+        } else {
+            other++;
+        }
+        p += len;
+    }
+    return ascii / 4 + cjk + other / 2;
+}
+
+void agent_context_stats(const agent_t *agent, agent_context_stats_t *st) {
+    if (!st) return;
+    memset(st, 0, sizeof(*st));
+    if (!agent) return;
+
+    st->system_tokens = agent_estimate_tokens(agent->system_prompt);
+    for (int i = 0; i < agent->n_tools; i++) {
+        st->tool_tokens += agent_estimate_tokens(agent->tools[i].name)
+                         + agent_estimate_tokens(agent->tools[i].description)
+                         + agent_estimate_tokens(agent->tools[i].parameters_schema);
+    }
+    for (int i = 0; i < agent->n_messages; i++) {
+        const message_t *m = &agent->messages[i];
+        st->message_tokens += agent_estimate_tokens(m->content)
+                            + agent_estimate_tokens(m->reasoning_content)
+                            + agent_estimate_tokens(m->name);
+        for (int j = 0; j < m->n_tool_calls; j++) {
+            st->message_tokens += agent_estimate_tokens(m->tool_calls[j].name)
+                                + agent_estimate_tokens(m->tool_calls[j].arguments);
+        }
+        for (int j = 0; j < m->n_tool_results; j++) {
+            st->message_tokens += agent_estimate_tokens(m->tool_results[j].content);
+        }
+    }
+    st->total_tokens = st->system_tokens + st->tool_tokens + st->message_tokens;
+}
+
+/* Build a plain-text transcript of the conversation (for compaction). */
+static char *agent_build_transcript(const agent_t *agent) {
+    if (!agent || agent->n_messages == 0) return NULL;
+    size_t buf_sz = 64 * 1024;
+    size_t buf_len = 0;
+    char *transcript = malloc(buf_sz);
+    if (!transcript) return NULL;
+    transcript[0] = '\0';
+
+    for (int i = 0; i < agent->n_messages; i++) {
+        const message_t *m = &agent->messages[i];
+        const char *role_str = "?";
+        switch (m->role) {
+        case MSG_ROLE_USER:      role_str = "USER"; break;
+        case MSG_ROLE_ASSISTANT: role_str = "ASSISTANT"; break;
+        case MSG_ROLE_TOOL:      role_str = "TOOL"; break;
+        default: break;
+        }
+
+        char msg_buf[8192];
+        if (m->content && m->content[0])
+            snprintf(msg_buf, sizeof(msg_buf), "[%s]: %s\n", role_str, m->content);
+        else
+            snprintf(msg_buf, sizeof(msg_buf), "[%s]: (no text)\n", role_str);
+
+        char tc_buf[4096];
+        tc_buf[0] = '\0';
+        if (m->n_tool_calls > 0) {
+            int off = 0;
+            off += snprintf(tc_buf + off, sizeof(tc_buf) - off, "  Tool calls:\n");
+            for (int j = 0; j < m->n_tool_calls && off < (int)sizeof(tc_buf) - 1; j++) {
+                const char *args = m->tool_calls[j].arguments
+                                   ? m->tool_calls[j].arguments : "{}";
+                size_t alen = strlen(args);
+                int show = (int)(alen > 500 ? 500 : alen);
+                off += snprintf(tc_buf + off, sizeof(tc_buf) - off,
+                                "    - %s: %.*s%s\n", m->tool_calls[j].name,
+                                show, args, alen > 500 ? "...(truncated)" : "");
+            }
+        }
+
+        char tr_buf[4096];
+        tr_buf[0] = '\0';
+        if (m->n_tool_results > 0) {
+            int off = 0;
+            off += snprintf(tr_buf + off, sizeof(tr_buf) - off, "  Tool results:\n");
+            for (int j = 0; j < m->n_tool_results && off < (int)sizeof(tr_buf) - 1; j++) {
+                const char *content = m->tool_results[j].content
+                                      ? m->tool_results[j].content : "";
+                size_t clen = strlen(content);
+                int show = (int)(clen > 2000 ? 2000 : clen);
+                off += snprintf(tr_buf + off, sizeof(tr_buf) - off,
+                                "    [%s]: %.*s%s\n",
+                                m->tool_results[j].is_error ? "ERROR" : "OK",
+                                show, content,
+                                clen > 2000 ? "...(truncated)" : "");
+            }
+        }
+
+        size_t needed = strlen(msg_buf) + strlen(tc_buf) + strlen(tr_buf) + 2;
+        while (buf_len + needed + 1 > buf_sz) {
+            buf_sz *= 2;
+            char *grown = realloc(transcript, buf_sz);
+            if (!grown) { free(transcript); return NULL; }
+            transcript = grown;
+        }
+        strcpy(transcript + buf_len, msg_buf);
+        buf_len += strlen(msg_buf);
+        if (tc_buf[0]) {
+            strcpy(transcript + buf_len, tc_buf);
+            buf_len += strlen(tc_buf);
+        }
+        if (tr_buf[0]) {
+            strcpy(transcript + buf_len, tr_buf);
+            buf_len += strlen(tr_buf);
+        }
+        transcript[buf_len++] = '\n';
+        transcript[buf_len] = '\0';
+    }
+    return transcript;
+}
+
+int agent_compact(agent_t *agent) {
+    if (!agent || agent->n_messages == 0) return -1;
+
+    char *transcript = agent_build_transcript(agent);
+    if (!transcript) return -1;
+
+    static const char *compact_instruction =
+        "You are compressing the conversation history of an AI coding "
+        "assistant session. Your task is to produce a structured summary "
+        "that preserves ONLY the information needed to continue work "
+        "effectively:\n\n"
+        "REQUIRED - must preserve:\n"
+        "- The user's final/current task goal\n"
+        "- Important technical decisions made (with rationale)\n"
+        "- Files modified and key code changes (what was changed and why)\n"
+        "- Project architecture information (language, framework, structure)\n\n"
+        "DISCARD:\n"
+        "- Trial-and-error attempts and failed approaches\n"
+        "- Reverted/modified changes that no longer apply\n"
+        "- Verbose tool outputs, logs, debug output\n"
+        "- Repetitive or redundant exchanges\n"
+        "- Irrelevant tangents\n\n"
+        "Format the summary as a compact but complete technical document. "
+        "Keep it concise. Write in prose, not bullet points.\n\n"
+        "Here is the conversation to compress:\n\n"
+        "---BEGIN CONVERSATION---\n";
+
+    size_t prompt_sz = strlen(compact_instruction) + strlen(transcript) + 64;
+    char *prompt = malloc(prompt_sz);
+    if (!prompt) { free(transcript); return -1; }
+    snprintf(prompt, prompt_sz, "%s%s\n---END CONVERSATION---\n",
+             compact_instruction, transcript);
+    free(transcript);
+
+    int saved_count = agent->n_messages;
+
+    /* Clear conversation — agent_chat will populate fresh */
+    for (int i = 0; i < agent->n_messages; i++)
+        message_clear(&agent->messages[i]);
+    agent->n_messages = 0;
+
+    /* Send compaction request; suppress auto-compact re-entry */
+    agent->compacting = true;
+    message_t *resp = agent_chat(agent, prompt);
+    agent->compacting = false;
+    free(prompt);
+
+    char *compressed = NULL;
+    if (resp && resp->content && resp->content[0])
+        compressed = strdup(resp->content);
+    message_free(resp);
+
+    /* Clear again — don't keep the compaction request/response */
+    for (int i = 0; i < agent->n_messages; i++)
+        message_clear(&agent->messages[i]);
+    agent->n_messages = 0;
+
+    if (!compressed) return -1;
+
+    size_t ctx_sz = strlen(compressed) + 128;
+    char *ctx_msg = malloc(ctx_sz);
+    if (!ctx_msg) { free(compressed); return -1; }
+    snprintf(ctx_msg, ctx_sz,
+             "[Compressed conversation summary — %d messages condensed]\n\n%s",
+             saved_count, compressed);
+    free(compressed);
+
+    message_t ctx_message = {
+        .role = MSG_ROLE_USER,
+        .content = ctx_msg,
+        .n_tool_calls = 0,
+        .n_tool_results = 0,
+    };
+    agent_add_message(agent, &ctx_message);
+    free(ctx_msg);
+    return saved_count;
+}
+
+/* Drop the oldest messages (sliding window) to shrink the context. */
+static void agent_trim_old_messages(agent_t *agent) {
+    if (!agent || agent->n_messages < 4) return;
+    int keep = agent->n_messages / 2;
+    if (keep < 4) keep = 4;
+    int drop = agent->n_messages - keep;
+    for (int i = 0; i < drop; i++)
+        message_clear(&agent->messages[i]);
+    memmove(&agent->messages[0], &agent->messages[drop],
+            keep * sizeof(message_t));
+    agent->n_messages = keep;
+}
+
+/* Automatic context management: compact or trim before a request when
+ * the estimated conversation size approaches the context window. */
+static void agent_maybe_manage_context(agent_t *agent) {
+    if (!agent || agent->compacting) return;
+    if (!agent->provider.auto_compact) return;
+    if (agent->provider.context_length <= 0) return;
+
+    long long limit = (long long)(agent->provider.context_length
+                                  * agent->provider.compact_ratio);
+    agent_context_stats_t st;
+    agent_context_stats(agent, &st);
+    if (st.total_tokens <= limit) return;
+
+    fprintf(stderr,
+            "[context] estimated %lld/%lld tokens, compacting conversation...\n",
+            st.total_tokens, (long long)agent->provider.context_length);
+    if (agent_compact(agent) > 0) {
+        agent_context_stats(agent, &st);
+        if (st.total_tokens <= limit) return;
+        fprintf(stderr,
+                "[context] still %lld tokens after compaction, trimming history\n",
+                st.total_tokens);
+    } else {
+        fprintf(stderr, "[context] compaction failed, trimming history\n");
+    }
+    agent_trim_old_messages(agent);
+}
+
 /* ── Agent lifecycle ────────────────────────────────────────────── */
 
 agent_t *agent_create(provider_config_t *config, struct api_provider *api) {
@@ -62,6 +321,9 @@ agent_t *agent_create(provider_config_t *config, struct api_provider *api) {
         agent->provider.thinking_enabled   = config->thinking_enabled;
         agent->provider.thinking_configured = config->thinking_configured;
         agent->provider.max_retries      = config->max_retries;
+        agent->provider.context_length   = config->context_length;
+        agent->provider.auto_compact     = config->auto_compact;
+        agent->provider.compact_ratio    = config->compact_ratio;
         agent->provider.reasoning_effort   = config->reasoning_effort
                                            ? strdup(config->reasoning_effort) : NULL;
     }
@@ -369,6 +631,8 @@ sse_done:
 
 message_t *agent_chat(agent_t *agent, const char *user_input) {
     if (!agent || !user_input) return NULL;
+
+    agent_maybe_manage_context(agent);
 
     /* Add user message to conversation */
     message_t user_msg = {
@@ -707,6 +971,8 @@ message_t *agent_chat_stream(agent_t *agent, const char *user_input,
                              void (*on_token)(const char *token, void *ctx),
                              void *ctx) {
     if (!agent || !user_input) return NULL;
+
+    agent_maybe_manage_context(agent);
 
     message_t user_msg = {
         .role = MSG_ROLE_USER, .content = strdup(user_input),

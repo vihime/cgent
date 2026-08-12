@@ -305,6 +305,48 @@ the REPL with `/usage` or `/context`:
 [usage] 2 request(s), 1234 in / 567 out tokens (total 1801)
 ```
 
+### Automatic Context Management
+
+Before each request, cgent estimates the conversation size (ASCII ~4
+chars/token, CJK ~1 char/token — a much better fit for Chinese than the
+old flat heuristic). When the estimate exceeds `compact_ratio` of the
+model's context window, the conversation is automatically summarized via
+a compaction request and replaced with the summary. If compaction fails
+or the summary is still too large, the oldest messages are trimmed.
+
+Configure per model in `settings.json`:
+
+```json
+{
+  "models": {
+    "deepseek-v4-flash": {
+      "auto_compact": true,
+      "compact_ratio": 0.75
+    }
+  }
+}
+```
+
+Disable at runtime with `--no-auto-compact`. `/context` now uses the same
+CJK-aware estimator.
+
+### Tool Approval
+
+Risky built-in tools (`bash`, `write_file`, `edit`, `apply_patch`) prompt
+for confirmation before executing in the interactive REPL. The `confirm`
+tool lets the model explicitly ask the user for permission before a
+destructive action.
+
+```text
+[cgent] Tool 'bash' requires your approval.
+  args: {"command":"rm -rf build"}
+
+Approve? [y/N] n
+```
+
+Single-shot `-q` mode and `--yes` skip the prompts (the command is
+explicitly user-initiated), and subagent processes are non-interactive.
+
 ## Skill Management
 
 Skills are markdown definitions in `~/.cgent/skills/<name>/SKILL.md` with

@@ -197,6 +197,97 @@ static void test_usage_accumulates(void) {
     OK();
 }
 
+static void test_estimate_tokens(void) {
+    TEST("token estimator (ASCII/CJK)");
+    CHECK(agent_estimate_tokens(NULL) == 0);
+    CHECK(agent_estimate_tokens("") == 0);
+    CHECK(agent_estimate_tokens("abcd") == 1);
+    char ascii[501];
+    memset(ascii, 'a', 500);
+    ascii[500] = '\0';
+    CHECK(agent_estimate_tokens(ascii) == 125);
+    /* 10 CJK chars ≈ 10 tokens */
+    CHECK(agent_estimate_tokens("中文测试十个汉字内容") == 10);
+    OK();
+}
+
+/* Push a big conversation so the estimated size exceeds the limit. */
+static void preload_large_conversation(agent_t *agent, int messages) {
+    char buf[1200];
+    memset(buf, 'x', sizeof(buf) - 1);
+    buf[sizeof(buf) - 1] = '\0';
+    for (int i = 0; i < messages; i++) {
+        message_t m = {
+            .role = MSG_ROLE_USER,
+            .content = strdup(buf),
+        };
+        agent_add_message(agent, &m);
+        free(m.content);
+    }
+}
+
+static void test_auto_compact(void) {
+    TEST("auto-compact triggers and replaces history");
+    http_mock_enable();
+    /* 1st request: compaction summary; 2nd: actual chat response */
+    http_mock_push_chat_response("COMPRESSED SUMMARY", NULL, NULL, NULL);
+    push_response_with_usage("final answer", 30, 10);
+
+    provider_config_t cfg = test_config(false, 1);
+    cfg.context_length = 2000;
+    cfg.auto_compact = true;
+    cfg.compact_ratio = 0.5;   /* limit = 1000 tokens */
+    agent_t *agent = agent_create(&cfg, g_api);
+    free(cfg.api_key); free(cfg.base_url); free(cfg.model);
+    preload_large_conversation(agent, 5);  /* ~5 * 300 tokens = 1500 > 1000 */
+
+    message_t *resp = agent_chat(agent, "continue");
+    CHECK(resp != NULL);
+    CHECK(resp->content && strcmp(resp->content, "final answer") == 0);
+    CHECK(agent->request_count == 2);      /* compaction + chat */
+    CHECK(agent->n_messages >= 2 && agent->n_messages <= 4);
+    bool found_summary = false;
+    for (int i = 0; i < agent->n_messages; i++) {
+        if (agent->messages[i].content &&
+            strstr(agent->messages[i].content, "Compressed conversation summary"))
+            found_summary = true;
+    }
+    CHECK(found_summary);
+
+    message_free(resp);
+    agent_free(agent);
+    http_mock_clear();
+    OK();
+}
+
+static void test_auto_compact_trim_fallback(void) {
+    TEST("auto-compact falls back to trimming on failure");
+    http_mock_enable();
+    /* Compaction request fails (500, no retries); chat then succeeds */
+    http_mock_push(500, "{\"error\":\"compaction boom\"}");
+    push_response_with_usage("still works", 5, 5);
+
+    provider_config_t cfg = test_config(false, 0);
+    cfg.context_length = 2000;
+    cfg.auto_compact = true;
+    cfg.compact_ratio = 0.5;
+    agent_t *agent = agent_create(&cfg, g_api);
+    free(cfg.api_key); free(cfg.base_url); free(cfg.model);
+    preload_large_conversation(agent, 8);
+    int before = agent->n_messages;
+
+    message_t *resp = agent_chat(agent, "continue");
+    CHECK(resp != NULL);
+    CHECK(resp->content && strcmp(resp->content, "still works") == 0);
+    CHECK(agent->n_messages < before);     /* trimmed */
+    CHECK(agent->n_messages >= 2);         /* kept recent + new turns */
+
+    message_free(resp);
+    agent_free(agent);
+    http_mock_clear();
+    OK();
+}
+
 int main(void) {
     printf("Agent reliability tests:\n");
     provider_init();
@@ -212,6 +303,9 @@ int main(void) {
     test_retry_exhausted();
     test_stream_retry_usage();
     test_usage_accumulates();
+    test_estimate_tokens();
+    test_auto_compact();
+    test_auto_compact_trim_fallback();
 
     http_mock_disable();
     http_cleanup();

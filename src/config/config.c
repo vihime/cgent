@@ -50,6 +50,8 @@ static void add_default_model(cgent_config_t *cfg, const char *name,
     m->max_tokens  = 4096;
     m->stream      = true;
     m->max_retries = 3;
+    m->auto_compact = true;
+    m->compact_ratio = 0.75;
     /* Set context length based on provider defaults */
     if (strcmp(provider, "deepseek") == 0)      m->context_length = 1000000;
     else if (strcmp(provider, "openai") == 0)   m->context_length = 128000;
@@ -82,6 +84,8 @@ static cgent_config_t defaults(void) {
     cfg.system_prompt = NULL;
     cfg.verbose       = false;
     cfg.max_retries   = 3;
+    cfg.auto_compact  = true;
+    cfg.compact_ratio = 0.75;
     cfg.cgent_dir     = config_cgent_dir();
 
     return cfg;
@@ -169,6 +173,15 @@ static void apply_settings_file(cgent_config_t *cfg) {
             if (v && json_is_number(v)) {
                 int r = (int)json_number_value(v);
                 m->max_retries = r >= 0 ? r : 0;
+            }
+
+            v = json_object_get(val, "auto_compact");
+            if (v && json_is_bool(v)) m->auto_compact = json_bool_value(v);
+
+            v = json_object_get(val, "compact_ratio");
+            if (v && json_is_number(v)) {
+                double r = json_number_value(v);
+                m->compact_ratio = r > 0 && r < 1 ? r : 0.75;
             }
 
             /* ── thinking: {"type": "enabled"/"disabled"} ── */
@@ -272,6 +285,8 @@ static void resolve_active_model(cgent_config_t *cfg) {
     cfg->thinking_enabled   = m->thinking_enabled;
     cfg->thinking_configured = m->thinking_configured;
     cfg->max_retries      = m->max_retries;
+    cfg->auto_compact     = m->auto_compact;
+    cfg->compact_ratio    = m->compact_ratio;
     free(cfg->reasoning_effort);
     cfg->reasoning_effort = m->reasoning_effort ? strdup(m->reasoning_effort) : NULL;
 
@@ -360,25 +375,27 @@ typedef struct {
     bool thinking_enabled;
     const char *reasoning_effort;
     int max_retries;
+    bool auto_compact;
+    double compact_ratio;
 } model_preset_t;
 
 static const model_preset_t PROVIDER_PRESETS[] = {
     /* DeepSeek models */
     { "deepseek-v4-flash",   "deepseek", "https://api.deepseek.com",
-      0.7, 32768, 1048576, true, true,  "high", 3 },
+      0.7, 32768, 1048576, true, true,  "high", 3, true, 0.75 },
     { "deepseek-v4-pro[1m]", "deepseek", "https://api.deepseek.com",
-      0.7, 32768, 1048576, true, true,  "high", 3 },
+      0.7, 32768, 1048576, true, true,  "high", 3, true, 0.75 },
     /* OpenAI models */
     { "gpt-4o",              "openai",   "https://api.openai.com",
-      0.7, 4096,  128000,  true,  false, NULL, 3 },
+      0.7, 4096,  128000,  true,  false, NULL, 3, true, 0.75 },
     { "gpt-4o-mini",         "openai",   "https://api.openai.com",
-      0.7, 4096,  128000,  true,  false, NULL, 3 },
+      0.7, 4096,  128000,  true,  false, NULL, 3, true, 0.75 },
     /* Anthropic models */
     { "claude-sonnet-4-6",   "anthropic","https://api.anthropic.com",
-      0.7, 4096,  200000,  true,  false, NULL, 3 },
+      0.7, 4096,  200000,  true,  false, NULL, 3, true, 0.75 },
     { "claude-opus-4-8",     "anthropic","https://api.anthropic.com",
-      0.7, 4096,  200000,  true,  false, NULL, 3 },
-    { NULL, NULL, NULL, 0, 0, 0, false, false, NULL, 0 },
+      0.7, 4096,  200000,  true,  false, NULL, 3, true, 0.75 },
+    { NULL, NULL, NULL, 0, 0, 0, false, false, NULL, 0, false, 0 },
 };
 
 /* Apply a model preset to a JSON object (for settings.json "models" section) */
@@ -393,6 +410,8 @@ static void apply_preset_to_json(json_value_t *model_obj, const model_preset_t *
     json_object_set(model_obj, "context_length", json_number(p->context_length));
     json_object_set(model_obj, "stream", json_bool(p->stream));
     json_object_set(model_obj, "max_retries", json_number(p->max_retries));
+    json_object_set(model_obj, "auto_compact", json_bool(p->auto_compact));
+    json_object_set(model_obj, "compact_ratio", json_number(p->compact_ratio));
     if (p->thinking_enabled) {
         json_value_t *thinking = json_object();
         json_object_set(thinking, "type", json_string("enabled"));

@@ -35,6 +35,25 @@ void tool_registry_clear(void);
 char *tool_execute(const char *name, const char *args_json,
                    int timeout_ms, char **error);
 
+/* ── Approval / confirmation hooks ──────────────────────────────── */
+
+/* Called before executing a tool marked requires_approval. Return true
+ * to allow execution, false to deny it. */
+typedef bool (*tool_approval_fn)(const char *tool_name,
+                                 const char *args_json, void *ctx);
+
+/* Called by the 'confirm' tool when the agent asks the user for
+ * permission to do something. Return true to approve. */
+typedef bool (*tool_confirm_fn)(const char *question, void *ctx);
+
+/* Set (or clear with NULL) the approval/confirm hooks. */
+void tool_set_approval_callback(tool_approval_fn fn, void *ctx);
+void tool_set_confirm_callback(tool_confirm_fn fn, void *ctx);
+
+/* Check whether a confirmation prompt is available and ask one. */
+bool tool_confirm_available(void);
+bool tool_confirm_ask(const char *question);
+
 /* ── Built-in tool registration ─────────────────────────────────── */
 
 /* Register all built-in tools (read_file, write_file, bash, think).

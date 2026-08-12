@@ -41,6 +41,8 @@ typedef struct {
     bool thinking_configured; /* Whether thinking was explicitly set */
     char *reasoning_effort;  /* "low", "medium", "high", "max" or NULL */
     int max_retries;         /* Transient-failure retries per request */
+    bool auto_compact;       /* Auto-compact when context is nearly full */
+    double compact_ratio;    /* Fraction of context that triggers compaction */
 } model_entry_t;
 
 /* ── Runtime configuration ──────────────────────────────────────── */
@@ -66,6 +68,8 @@ typedef struct {
     bool thinking_configured;
     char *reasoning_effort;
     int max_retries;
+    bool auto_compact;
+    double compact_ratio;
 
     /* Agent settings */
     char *agent_dir;
@@ -137,6 +141,8 @@ typedef struct {
     int max_tokens;
     int retries;                /* --retries: -1 = unset (use config) */
     bool stream;
+    bool no_auto_compact;       /* --no-auto-compact */
+    bool yes;                   /* -y/--yes: skip approval prompts */
     bool verbose;
     bool help;
     bool version;

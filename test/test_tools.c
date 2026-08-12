@@ -368,6 +368,67 @@ static void test_tool_not_found(void) {
     OK();
 }
 
+/* ── Approval / confirm hooks ───────────────────────────────────── */
+
+static bool g_approve = false;
+static bool fake_approval(const char *tool_name, const char *args, void *ctx) {
+    (void)tool_name; (void)args; (void)ctx;
+    return g_approve;
+}
+
+static bool g_confirm_answer = false;
+static bool fake_confirm(const char *q, void *ctx) {
+    (void)q; (void)ctx;
+    return g_confirm_answer;
+}
+
+static void test_approval_flow(void) {
+    TEST("risky tool approval gating");
+    builtin_tools_register();
+
+    g_approve = false;
+    tool_set_approval_callback(fake_approval, NULL);
+    char *error = NULL;
+    char *result = tool_execute("bash", "{\"command\":\"echo hi\"}", 5000, &error);
+    CHECK(result == NULL);
+    CHECK(error != NULL);
+    CHECK(strstr(error, "denied by user") != NULL);
+    free(error);
+    error = NULL;
+
+    g_approve = true;
+    result = tool_execute("bash", "{\"command\":\"echo hi\"}", 5000, &error);
+    CHECK(result != NULL);
+    CHECK(error == NULL);
+    free(result);
+    if (error) free(error);
+
+    tool_set_approval_callback(NULL, NULL);
+    OK();
+}
+
+static void test_confirm_tool(void) {
+    TEST("confirm tool asks and reports approval");
+    g_confirm_answer = true;
+    tool_set_confirm_callback(fake_confirm, NULL);
+    char *error = NULL;
+    char *result = tool_execute("confirm",
+        "{\"action\":\"delete all files\"}", 5000, &error);
+    CHECK(result != NULL);
+    CHECK(strstr(result, "\"approved\":true") != NULL);
+    free(result);
+
+    g_confirm_answer = false;
+    result = tool_execute("confirm", "{\"question\":\"OK?\"}", 5000, &error);
+    CHECK(result != NULL);
+    CHECK(strstr(result, "\"approved\":false") != NULL);
+    free(result);
+    if (error) free(error);
+
+    tool_set_confirm_callback(NULL, NULL);
+    OK();
+}
+
 int main(void) {
     printf("Tool tests:\n");
     test_registry_add_find();
@@ -386,6 +447,8 @@ int main(void) {
     test_apply_patch_mismatch();
     test_git_tools();
     test_tool_not_found();
+    test_approval_flow();
+    test_confirm_tool();
     printf("  %d/%d passed\n", passed, tests);
     return passed == tests ? 0 : 1;
 }

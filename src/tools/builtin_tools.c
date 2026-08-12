@@ -202,6 +202,46 @@ static char *tool_think(const char *name, const char *args_json, char **error) {
     return result_str;
 }
 
+/* ── confirm ────────────────────────────────────────────────────── */
+
+static char *tool_confirm(const char *name, const char *args_json, char **error) {
+    (void)name;
+    json_value_t *args = json_parse(args_json);
+    if (!args) {
+        if (error) *error = strdup("Invalid JSON arguments");
+        return NULL;
+    }
+
+    json_value_t *question_val = json_object_get(args, "question");
+    json_value_t *action_val = json_object_get(args, "action");
+    const char *question = question_val && json_is_string(question_val)
+        ? json_string_value(question_val) : "";
+    const char *action = action_val && json_is_string(action_val)
+        ? json_string_value(action_val) : "";
+
+    char prompt_buf[2048];
+    if (question[0]) {
+        snprintf(prompt_buf, sizeof(prompt_buf), "%s", question);
+    } else if (action[0]) {
+        snprintf(prompt_buf, sizeof(prompt_buf),
+                 "The agent wants to: %s", action);
+    } else {
+        snprintf(prompt_buf, sizeof(prompt_buf), "Approve this action?");
+    }
+
+    bool approved = tool_confirm_ask(prompt_buf);
+
+    json_value_t *out = json_object();
+    json_object_set(out, "approved", json_bool(approved));
+    json_object_set(out, "reason", json_string(
+        approved ? "approved by user"
+                 : "not approved or confirmation unavailable"));
+    char *out_str = json_stringify(out);
+    json_free(out);
+    json_free(args);
+    return out_str;
+}
+
 /* ── spawn_subagent ─────────────────────────────────────────────── */
 
 static char *tool_spawn_subagent(const char *name, const char *args_json, char **error) {
@@ -1468,6 +1508,7 @@ void builtin_tools_register(void) {
             "\"content\":{\"type\":\"string\",\"description\":\"Content to write\"}},"
             "\"required\":[\"path\",\"content\"]}",
             tool_write_file);
+        t->requires_approval = true;
         tool_registry_add(t);
     }
 
@@ -1479,6 +1520,7 @@ void builtin_tools_register(void) {
             "\"command\":{\"type\":\"string\",\"description\":\"The command to execute\"}},"
             "\"required\":[\"command\"]}",
             tool_bash);
+        t->requires_approval = true;
         tool_registry_add(t);
     }
 
@@ -1491,6 +1533,19 @@ void builtin_tools_register(void) {
             "\"thought\":{\"type\":\"string\",\"description\":\"What to think about\"}},"
             "\"required\":[\"thought\"]}",
             tool_think);
+        tool_registry_add(t);
+    }
+
+    /* confirm */
+    {
+        tool_t *t = tool_create("confirm",
+            "Ask the user to approve an action before performing it. "
+            "Use this before destructive or irreversible operations.",
+            "{\"type\":\"object\",\"properties\":{"
+            "\"question\":{\"type\":\"string\",\"description\":\"The question to ask the user\"},"
+            "\"action\":{\"type\":\"string\",\"description\":\"Description of the action to approve\"}},"
+            "\"required\":[\"action\"]}",
+            tool_confirm);
         tool_registry_add(t);
     }
 
@@ -1522,6 +1577,7 @@ void builtin_tools_register(void) {
             "\"new_string\":{\"type\":\"string\",\"description\":\"Replacement text\"}},"
             "\"required\":[\"file_path\",\"old_string\",\"new_string\"]}",
             tool_edit);
+        t->requires_approval = true;
         tool_registry_add(t);
     }
 
@@ -1597,6 +1653,7 @@ void builtin_tools_register(void) {
             "\"path\":{\"type\":\"string\",\"description\":\"Optional: override the target file path\"}},"
             "\"required\":[\"patch\"]}",
             tool_apply_patch);
+        t->requires_approval = true;
         tool_registry_add(t);
     }
 

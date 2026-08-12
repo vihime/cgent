@@ -37,6 +37,8 @@ cli_args_t cli_parse(int argc, char **argv) {
         {"temperature", required_argument, 0, 't'},
         {"max-tokens",  required_argument, 0, 'M'},
         {"retries",     required_argument, 0, 1002},
+        {"no-auto-compact", no_argument,   0, 1003},
+        {"yes",             no_argument,   0, 'y'},
         {"no-stream",   no_argument,       0, 'n'},
         {"config",      required_argument, 0, 'c'},
         {"resume",      required_argument, 0, 'r'},
@@ -61,6 +63,8 @@ cli_args_t cli_parse(int argc, char **argv) {
         case 't': args.temperature = atof(optarg); break;
         case 'M': args.max_tokens  = atoi(optarg); break;
         case 1002: args.retries    = atoi(optarg); break;
+        case 1003: args.no_auto_compact = true; break;
+        case 'y': args.yes = true; break;
         case 'n': args.stream      = false; break;
         case 'c': args.config_path = optarg; break;
         case 'r': args.resume_uuid = optarg; break;
@@ -94,6 +98,7 @@ void config_apply_cli(cgent_config_t *cfg, const cli_args_t *args) {
     cfg->temperature = args->temperature;
     cfg->max_tokens  = args->max_tokens;
     if (args->retries >= 0) cfg->max_retries = args->retries;
+    if (args->no_auto_compact) cfg->auto_compact = false;
     cfg->stream      = args->stream;
     cfg->verbose     = args->verbose;
 }
