@@ -8,6 +8,7 @@
 #include "subagent.h"
 #include "session.h"
 #include "mcp.h"
+#include "skills.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -45,6 +46,7 @@ static void print_usage(const char *prog) {
     printf("\nSubcommands:\n");
     printf("  config <provider> <key>  Configure API key for a provider\n");
     printf("  mcp <command>            Manage MCP servers (list/add/remove/test)\n");
+    printf("  skill <command>          Manage skills (list/add/remove/show)\n");
     printf("\nAgent directory:\n");
     printf("  The agent directory must contain an AGENTS.md file\n");
     printf("  which provides the system prompt for the agent.\n");
@@ -179,6 +181,11 @@ int main(int argc, char **argv) {
     /* ── MCP subcommand: cgent mcp ... ─────────────────────────── */
     if (argc >= 2 && strcmp(argv[1], "mcp") == 0) {
         return mcp_main(argc - 1, argv + 1);
+    }
+
+    /* ── Skill subcommand: cgent skill ... ─────────────────────── */
+    if (argc >= 2 && strcmp(argv[1], "skill") == 0) {
+        return skill_main(argc - 1, argv + 1);
     }
 
     cli_args_t args = cli_parse(argc, argv);

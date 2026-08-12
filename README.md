@@ -19,6 +19,7 @@ cgent -q "Read /etc/hostname"                  # with tool use
 cgent                                           # interactive REPL
 cgent --resume <uuid>                           # resume a session
 cgent mcp list                                  # manage MCP servers
+cgent skill list                                # manage skills
 ```
 
 ## Requirements
@@ -286,6 +287,29 @@ mcp_servers:
 
 Servers that fail to start (or expose no tools) are reported as warnings
 on stderr and do not block the session.
+
+## Skill Management
+
+Skills are markdown definitions in `~/.cgent/skills/<name>/SKILL.md` with
+YAML frontmatter (`name`, `description`) and an instruction body. They are
+loaded at startup, listed in the system prompt, and invocable in the REPL
+with `/name`.
+
+```bash
+# List installed skills
+cgent skill list
+
+# Create a skill
+cgent skill add code-review \
+  --description "Review code for bugs and style issues" \
+  --instruction "Review the given code carefully for bugs, security, and style issues."
+
+# Show a skill's full definition
+cgent skill show code-review
+
+# Delete a skill (use --force on add to overwrite an existing one)
+cgent skill remove code-review
+```
 
 ## Architecture
 

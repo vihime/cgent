@@ -46,4 +46,8 @@ char *skills_build_prompt(skill_list_t *list, const char *base_prompt);
 /* Free a skill list */
 void skills_free(skill_list_t *list);
 
+/* ── CLI entry point: cgent skill <subcommand> ... ──────────────── */
+
+int skill_main(int argc, char **argv);
+
 #endif /* SKILLS_H */

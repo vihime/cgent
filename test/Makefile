@@ -31,6 +31,7 @@ PROJ_SRCS = $(SRC_DIR)/core/message.c \
             $(SRC_DIR)/mcp/mcp_config.c \
             $(SRC_DIR)/mcp/mcp_client.c \
             $(SRC_DIR)/mcp/mcp_runtime.c \
+            $(SRC_DIR)/skills/skill_cli.c \
             $(SRC_DIR)/platform/os.c \
             $(SRC_DIR)/platform/utf8_input.c \
             ../third_party/cJSON/cJSON.c
@@ -39,7 +40,8 @@ PROJ_OBJS = $(PROJ_SRCS:.c=.o)
 
 # Test source files
 TEST_SRCS = test_json.c test_message.c test_config.c test_tools.c \
-            test_integration.c test_memory_leak.c test_subagent.c test_mcp.c
+            test_integration.c test_memory_leak.c test_subagent.c test_mcp.c \
+            test_skills.c
 
 # Test runner stub
 TEST_RUNNER = runner.c
@@ -47,7 +49,7 @@ TEST_RUNNER = runner.c
 TEST_OBJS = $(TEST_RUNNER:.c=.o) $(PROJ_OBJS)
 
 .PHONY: all clean test test-json test-message test-config test-tools \
-        test-integration test-memory test-subagent test-mcp test-all
+        test-integration test-memory test-subagent test-mcp test-skills test-all
 
 all: test
 
@@ -76,6 +78,9 @@ test-subagent: $(PROJ_OBJS) test_subagent.c
 test-mcp: $(PROJ_OBJS) test_mcp.c
 	$(CC) $(CFLAGS) -o $@ test_mcp.c $(PROJ_OBJS) $(LDFLAGS)
 
+test-skills: $(PROJ_OBJS) test_skills.c
+	$(CC) $(CFLAGS) -o $@ test_skills.c $(PROJ_OBJS) $(LDFLAGS)
+
 # Compile project objects
 $(SRC_DIR)/%.o: $(SRC_DIR)/%.c
 	@mkdir -p $(dir $@)
@@ -85,7 +90,7 @@ $(SRC_DIR)/%.o: $(SRC_DIR)/%.c
 	$(Q)$(CC) $(CFLAGS) -MMD -MP -c -o $@ $<
 
 # Run all tests
-test: test-json test-message test-config test-tools test-memory test-mcp
+test: test-json test-message test-config test-tools test-memory test-mcp test-skills
 	@echo "=== Running JSON tests ==="
 	@./test-json
 	@echo ""
@@ -104,6 +109,9 @@ test: test-json test-message test-config test-tools test-memory test-mcp
 	@echo "=== Running MCP tests ==="
 	@./test-mcp
 	@echo ""
+	@echo "=== Running Skill tests ==="
+	@./test-skills
+	@echo ""
 	@echo "=== All unit tests passed ==="
 
 # Integration test (needs API key)
@@ -113,6 +121,6 @@ test-all: test test-integration
 	@./test-integration
 
 clean:
-	rm -f test-json test-message test-config test-tools test-integration test-memory test-subagent test-mcp
+	rm -f test-json test-message test-config test-tools test-integration test-memory test-subagent test-mcp test-skills
 	rm -f $(PROJ_OBJS)
 	rm -f $(SRC_DIR)/**/*.d
