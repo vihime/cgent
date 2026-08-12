@@ -4,6 +4,7 @@
  *                   apply_patch, git_status, git_diff, git_log, subagent)
  */
 #include "tools.h"
+#include "todo.h"
 #include "json.h"
 #include "platform.h"
 #include "subagent.h"
@@ -1488,6 +1489,8 @@ static char *tool_clear_mailbox(const char *name, const char *args_json, char **
 /* ── Registration ───────────────────────────────────────────────── */
 
 void builtin_tools_register(void) {
+    todo_tools_register();
+
     /* read_file */
     {
         tool_t *t = tool_create("read_file",

@@ -9,6 +9,7 @@
 #include "session.h"
 #include "mcp.h"
 #include "skills.h"
+#include "todo.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -91,7 +92,7 @@ static char *tab_complete(const char *input) {
     /* Built-in commands */
     static const char *builtins[] = {
         "/quit", "/exit", "/help", "/clear", "/tools", "/agents", "/skills",
-        "/model", "/context", "/usage", "/compact", NULL
+        "/model", "/context", "/usage", "/todos", "/compact", NULL
     };
 
     /* Find matches: any builtin or skill that starts with our input */
@@ -564,6 +565,7 @@ int main(int argc, char **argv) {
                     printf("  /agents       — List installed agents\n");
                     printf("  /context      — Show context usage breakdown\n");
                     printf("  /usage        — Show API token usage for this session\n");
+                    printf("  /todos        — Show the agent's todo list\n");
                     printf("  /compact      — Compress conversation history\n");
                     printf("  /skills       — List loaded skills\n");
                     if (cfg->skills && cfg->skills->count > 0) {
@@ -658,6 +660,20 @@ int main(int argc, char **argv) {
                            session->prompt_tokens + session->completion_tokens);
                     if (session->request_count == 0)
                         printf("  (no API requests yet)\n");
+                } else if (strcmp(line, "/todos") == 0) {
+                    int n = 0;
+                    todo_item_t *todos = todo_snapshot(&n);
+                    if (n == 0) {
+                        printf("No todos. The agent creates a plan with the "
+                               "todo_write tool.\n");
+                    } else {
+                        printf("Todos (%d):\n", n);
+                        for (int i = 0; i < n; i++) {
+                            printf("  [%d] [%-11s] %s\n",
+                                   i, todos[i].status, todos[i].content);
+                        }
+                    }
+                    todo_items_free(todos, n);
                 } else if (strcmp(line, "/compact") == 0) {
                     if (agent->n_messages == 0) {
                         printf("Nothing to compact — conversation is empty.\n");

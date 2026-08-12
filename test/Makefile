@@ -20,6 +20,7 @@ PROJ_SRCS = $(SRC_DIR)/core/message.c \
             $(SRC_DIR)/tools/tool_registry.c \
             $(SRC_DIR)/tools/tool_executor.c \
             $(SRC_DIR)/tools/builtin_tools.c \
+            $(SRC_DIR)/tools/todo.c \
             $(SRC_DIR)/subagent/subagent.c \
             $(SRC_DIR)/skills/skills.c \
             $(SRC_DIR)/session/session.c \

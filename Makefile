@@ -12,7 +12,7 @@ PROTO_SRCS  = src/protocol/provider.c src/protocol/deepseek.c \
               src/protocol/openai.c src/protocol/anthropic.c \
               src/protocol/bigmodel.c
 TOOL_SRCS   = src/tools/tool_registry.c src/tools/tool_executor.c \
-              src/tools/builtin_tools.c
+              src/tools/builtin_tools.c src/tools/todo.c
 SKILL_SRCS  = src/skills/skills.c src/skills/skill_cli.c
 MAILBOX_SRCS = src/mailbox/mailbox.c
 SESSION_SRCS = src/session/session.c

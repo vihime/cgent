@@ -2,8 +2,11 @@
  * test_tools.c — Tool registry and built-in tools unit tests
  */
 #include "tools.h"
+#include "todo.h"
 #include "json.h"
 #include "platform.h"
+#include "config.h"
+#include "session.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -429,6 +432,112 @@ static void test_confirm_tool(void) {
     OK();
 }
 
+/* ── Todo tools ─────────────────────────────────────────────────── */
+
+static void test_todo_tools(void) {
+    TEST("todo_write / todo_update / todo_list");
+    builtin_tools_register();
+
+    char *error = NULL;
+    char *result = tool_execute("todo_write",
+        "{\"todos\":["
+        "{\"content\":\"Fix parser\",\"status\":\"in_progress\"},"
+        "{\"content\":\"Add tests\",\"status\":\"pending\"},"
+        "{\"content\":\"Update docs\",\"status\":\"completed\"}"
+        "]}", 5000, &error);
+    CHECK(result != NULL);
+    json_value_t *parsed = json_parse(result);
+    CHECK(parsed != NULL);
+    CHECK(json_number_value(json_object_get(parsed, "count")) == 3.0);
+    json_free(parsed);
+    free(result);
+
+    result = tool_execute("todo_list", "{}", 5000, &error);
+    CHECK(result != NULL);
+    CHECK(strstr(result, "Fix parser") != NULL);
+    CHECK(strstr(result, "in_progress") != NULL);
+    free(result);
+
+    /* Update an item's status */
+    result = tool_execute("todo_update",
+        "{\"index\":0,\"status\":\"completed\"}", 5000, &error);
+    CHECK(result != NULL);
+    CHECK(strstr(result, "\"ok\":true") != NULL);
+    free(result);
+
+    int n = 0;
+    todo_item_t *todos = todo_snapshot(&n);
+    CHECK(n == 3);
+    CHECK(todos && strcmp(todos[0].status, "completed") == 0);
+    todo_items_free(todos, n);
+
+    /* Invalid status and out-of-range index are rejected */
+    error = NULL;
+    result = tool_execute("todo_update",
+        "{\"index\":0,\"status\":\"banana\"}", 5000, &error);
+    CHECK(result == NULL);
+    CHECK(error != NULL);
+    free(error);
+    error = NULL;
+    result = tool_execute("todo_update",
+        "{\"index\":99,\"status\":\"completed\"}", 5000, &error);
+    CHECK(result == NULL);
+    CHECK(error != NULL);
+    free(error);
+
+    /* Clear with an empty plan */
+    result = tool_execute("todo_write", "{\"todos\":[]}", 5000, &error);
+    CHECK(result != NULL);
+    CHECK(strstr(result, "\"count\":0") != NULL);
+    free(result);
+    OK();
+}
+
+static void test_todo_session_persistence(void) {
+    TEST("todo list persists in session file");
+    char orig_home[4096] = "";
+    const char *home = getenv("HOME");
+    if (home) snprintf(orig_home, sizeof(orig_home), "%s", home);
+    setenv("HOME", "/tmp/cgent_todo_test_home", 1);
+    system("rm -rf /tmp/cgent_todo_test_home");
+
+    cgent_config_t cfg = {
+        .provider = "deepseek",
+        .model = "deepseek-v4-flash",
+        .system_prompt = "test",
+    };
+    session_t *s = calloc(1, sizeof(session_t));
+    CHECK(s != NULL);
+    s->uuid = session_generate_uuid();
+    char *uuid = strdup(s->uuid);
+    CHECK(session_create(s, &cfg) == true);
+
+    todo_item_t items[2] = {
+        { .content = "Task A", .status = "pending" },
+        { .content = "Task B", .status = "in_progress" },
+    };
+    todo_replace(items, 2);
+    CHECK(session_save(s, &cfg) == true);
+    session_free(s);
+
+    todo_clear();
+    s = session_load(uuid);
+    CHECK(s != NULL);
+    int n = 0;
+    todo_item_t *todos = todo_snapshot(&n);
+    CHECK(n == 2);
+    CHECK(todos && strcmp(todos[0].content, "Task A") == 0);
+    CHECK(todos && strcmp(todos[1].status, "in_progress") == 0);
+    todo_items_free(todos, n);
+    session_free(s);
+
+    if (orig_home[0]) setenv("HOME", orig_home, 1);
+    else unsetenv("HOME");
+    system("rm -rf /tmp/cgent_todo_test_home");
+    free(uuid);
+    OK();
+}
+
 int main(void) {
     printf("Tool tests:\n");
     test_registry_add_find();
@@ -449,6 +558,8 @@ int main(void) {
     test_tool_not_found();
     test_approval_flow();
     test_confirm_tool();
+    test_todo_tools();
+    test_todo_session_persistence();
     printf("  %d/%d passed\n", passed, tests);
     return passed == tests ? 0 : 1;
 }

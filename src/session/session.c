@@ -6,6 +6,7 @@
  *   Line 2+: messages  (role, content, tool_calls, tool_results, raw_response)
  */
 #include "session.h"
+#include "todo.h"
 #include "json.h"
 #include "platform.h"
 
@@ -164,6 +165,23 @@ bool session_save(session_t *s, const cgent_config_t *cfg) {
     json_object_set(meta, "request_count", json_number(s->request_count));
     json_object_set(meta, "retry_count", json_number(s->retry_count));
 
+    /* Todo list */
+    {
+        int tn = 0;
+        todo_item_t *todos = todo_snapshot(&tn);
+        if (tn > 0) {
+            json_value_t *tarr = json_array();
+            for (int i = 0; i < tn; i++) {
+                json_value_t *tj = json_object();
+                json_object_set(tj, "content", json_string(todos[i].content));
+                json_object_set(tj, "status", json_string(todos[i].status));
+                json_array_append(tarr, tj);
+            }
+            json_object_set(meta, "todos", tarr);
+        }
+        todo_items_free(todos, tn);
+    }
+
     char *meta_str = json_stringify(meta);
     json_free(meta);
     fputs(meta_str, fp);
@@ -226,6 +244,22 @@ static void session_parse_message(session_t *s, json_value_t *jm) {
         if (v && json_is_number(v)) s->request_count = (int)json_number_value(v);
         v = json_object_get(jm, "retry_count");
         if (v && json_is_number(v)) s->retry_count = (int)json_number_value(v);
+        v = json_object_get(jm, "todos");
+        if (v && json_is_array(v)) {
+            int tn = json_array_length(v);
+            todo_item_t *todos = calloc(tn, sizeof(todo_item_t));
+            for (int i = 0; i < tn; i++) {
+                json_value_t *tj = json_array_get(v, i);
+                json_value_t *c = json_object_get(tj, "content");
+                json_value_t *st = json_object_get(tj, "status");
+                todos[i].content = strdup(c && json_is_string(c)
+                                          ? json_string_value(c) : "");
+                todos[i].status = strdup(st && json_is_string(st)
+                                          ? json_string_value(st) : "pending");
+            }
+            todo_replace(todos, tn);
+            todo_items_free(todos, tn);
+        }
         return;
     }
 

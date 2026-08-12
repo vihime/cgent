@@ -223,6 +223,9 @@ Examples:
 | `git_status` | Show git branch and changed files |
 | `git_diff` | Show git diff (staged, stat, or path-filtered) |
 | `git_log` | Show recent git commit history |
+| `todo_write` | Replace the agent's todo/plan list |
+| `todo_update` | Update one todo item's status or text |
+| `todo_list` | Show the current todo list |
 | `web_fetch` | Fetch content from a URL |
 | `web_search` | Perform a web search |
 | `send_message` | Send a message to the mailbox |
@@ -378,6 +381,15 @@ results are appended in call order regardless of completion order.
 
 Configure per model in `settings.json` (`"parallel_tools": true`, the
 default) or disable at runtime with `--no-parallel-tools`.
+
+### Task Planning (Todos)
+
+For multi-step tasks the agent can lay out an explicit plan with
+`todo_write` (replacing the whole list — the model owns the plan), then
+mark progress with `todo_update` and review with `todo_list`. Items carry
+a status (`pending`, `in_progress`, `completed`, `cancelled`). The list is
+persisted in the session file, so it survives `--resume`, and the REPL
+shows it with `/todos`.
 
 ## Skill Management
 
